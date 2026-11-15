@@ -36,6 +36,8 @@ export default defineConfig({
           {
             urlPattern: ({ request, url }) =>
               url.origin === self.location.origin &&
+              url.pathname.startsWith("/assets/") &&
+              /(^|\/)[^/]+-[a-zA-Z0-9_-]{8,}\.(?:js|css|png|jpe?g|svg|webp|woff2?)$/i.test(url.pathname) &&
               ["script", "style", "image", "font"].includes(request.destination),
             handler: "CacheFirst",
             options: { cacheName: "hail-samar-assets" },
