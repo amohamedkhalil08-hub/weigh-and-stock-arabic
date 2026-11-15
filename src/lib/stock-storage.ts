@@ -59,6 +59,22 @@ export async function saveStockItem(item: StockItem) {
   }
 }
 
+export async function saveStockItemWithOpeningMovement(item: StockItem, movement: StockMovement) {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction([ITEMS_STORE, MOVEMENTS_STORE], "readwrite");
+    transaction.objectStore(ITEMS_STORE).put(item);
+    transaction.objectStore(MOVEMENTS_STORE).add(movement);
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error("تعذر حفظ الصنف ورصيده الافتتاحي"));
+      transaction.onabort = () => reject(transaction.error ?? new Error("تم إلغاء حفظ الصنف ورصيده الافتتاحي"));
+    });
+  } finally {
+    database.close();
+  }
+}
+
 export async function saveStockMovement(movement: StockMovement) {
   const database = await openDatabase();
   try {

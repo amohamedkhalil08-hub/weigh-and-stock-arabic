@@ -4,7 +4,10 @@ export type StockItem = {
   piecesPerBundle: number;
   pieceWeightKg: number;
   createdAt: string;
+  countryOfOrigin?: CountryOfOrigin;
 };
+
+export type CountryOfOrigin = "اليمن" | "السعودية" | "الصين";
 
 export type MovementKind = "in" | "out";
 
@@ -39,6 +42,23 @@ export function computePiecesPerTon(pieceWeightKg: number) {
 export function computeTotalTons(totalPieces: number, pieceWeightKg: number) {
   const piecesPerTon = computePiecesPerTon(pieceWeightKg);
   return piecesPerTon > 0 ? totalPieces / piecesPerTon : 0;
+}
+
+export function createOpeningStockMovement(item: StockItem, bundleCount: number, id: string, createdAt: string): StockMovement {
+  const totalPieces = computeTotalPieces(bundleCount, item.piecesPerBundle);
+  return {
+    id,
+    itemId: item.id,
+    kind: "in",
+    bundleCount,
+    piecesPerBundle: item.piecesPerBundle,
+    totalPieces,
+    pieceWeightKg: item.pieceWeightKg,
+    piecesPerTon: computePiecesPerTon(item.pieceWeightKg),
+    totalTons: computeTotalTons(totalPieces, item.pieceWeightKg),
+    note: "رصيد افتتاحي",
+    createdAt,
+  };
 }
 
 export function getItemBalance(itemId: string, movements: StockMovement[]) {

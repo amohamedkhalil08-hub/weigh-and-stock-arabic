@@ -199,6 +199,12 @@
 .calculation-preview p > span { color: var(--color-muted-foreground); font-size: .72rem; }
 .calculation-preview strong { color: var(--color-primary); font-size: .88rem; overflow-wrap: anywhere; }
 .calculation-preview small { color: var(--color-muted-foreground); font-size: .66rem; overflow-wrap: anywhere; }
+.item-calculation-preview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--color-primary); background: var(--color-card); }
+.item-calculation-preview p { display: flex; flex-direction: column; gap: .35rem; min-width: 0; margin: 0; padding: .9rem .7rem; }
+.item-calculation-preview p + p { border-inline-start: 1px solid var(--color-border); }
+.item-calculation-preview p > span { color: var(--color-muted-foreground); font-size: .78rem; }
+.item-calculation-preview strong { color: var(--color-primary); font-size: 1.08rem; overflow-wrap: anywhere; }
+.item-calculation-preview small { color: var(--color-muted-foreground); font-size: .72rem; overflow-wrap: anywhere; }
 .form-submit { width: 100%; min-height: 2.8rem; }
 .outbound-layout { display: grid; gap: 1rem; }
 .invoice-section { border-top: 1px solid var(--color-border); }
@@ -288,6 +294,10 @@
   .calculation-preview p > span { font-size: .67rem; }
   .calculation-preview strong { font-size: .8rem; }
   .calculation-preview small { font-size: .61rem; }
+  .item-calculation-preview p { padding: .7rem .4rem; }
+  .item-calculation-preview p > span { font-size: .67rem; }
+  .item-calculation-preview strong { font-size: .82rem; }
+  .item-calculation-preview small { font-size: .61rem; }
   .report-tools { display: grid; grid-template-columns: 1fr 1fr; }
   .report-tools button:first-child { grid-column: 1 / -1; }
   .report-tools button { font-size: .78rem; }
