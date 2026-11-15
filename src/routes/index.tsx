@@ -45,12 +45,10 @@ function StockApp() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const restoreInput = useRef<HTMLInputElement>(null);
-  const desktopDate = new Intl.DateTimeFormat("ar-YE", { dateStyle: "medium" });
-  const timeFormatter = new Intl.DateTimeFormat("ar-YE", { timeStyle: "short" });
 
   const refresh = async () => setSnapshot(await readStockSnapshot());
   useEffect(() => {
-    void registerOfflineSupport();
+    void registerOfflineSupport().catch(() => undefined);
     void refresh().catch(() => setError("تعذر فتح البيانات المحفوظة على هذا الجهاز.")).finally(() => setLoading(false));
   }, []);
 
