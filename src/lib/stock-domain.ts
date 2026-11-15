@@ -37,7 +37,8 @@ export function computePiecesPerTon(pieceWeightKg: number) {
 }
 
 export function computeTotalTons(totalPieces: number, pieceWeightKg: number) {
-  return totalPieces * pieceWeightKg / 1000;
+  const piecesPerTon = computePiecesPerTon(pieceWeightKg);
+  return piecesPerTon > 0 ? totalPieces / piecesPerTon : 0;
 }
 
 export function getItemBalance(itemId: string, movements: StockMovement[]) {

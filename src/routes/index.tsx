@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { computePiecesPerTon, computeTotalPieces, computeTotalTons, getItemBalance, type MovementKind, type StockItem, type StockMovement, type StockSnapshot } from "@/lib/stock-domain";
 import { readStockSnapshot, restoreStockSnapshot, saveStockItem, saveStockMovement } from "@/lib/stock-storage";
+import { registerOfflineSupport } from "@/lib/offline-registration";
 import brandLogo from "@/assets/hail-samar-brand.jpg";
 
 export const Route = createFileRoute("/")({
@@ -47,6 +48,7 @@ function StockApp() {
 
   const refresh = async () => setSnapshot(await readStockSnapshot());
   useEffect(() => {
+    void registerOfflineSupport();
     void refresh().catch(() => setError("تعذر فتح البيانات المحفوظة على هذا الجهاز.")).finally(() => setLoading(false));
   }, []);
 
