@@ -8,8 +8,52 @@
 // hosting already compresses at the edge.
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
+  plugins: [
+    VitePWA({
+      strategies: "generateSW",
+      injectRegister: null,
+      registerType: "autoUpdate",
+      devOptions: { enabled: false },
+      filename: "sw.js",
+      workbox: {
+        navigateFallback: null,
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,jpg,jpeg,webp,woff2}"],
+        runtimeCaching: [
+          {
+            urlPattern: ({ request, url }) =>
+              url.origin === self.location.origin &&
+              request.destination === "image" &&
+              /^\/__l5e\/assets-v1\/[a-f0-9-]{36}\/hail-samar-brand\.jpg$/i.test(url.pathname),
+            handler: "CacheFirst",
+            options: { cacheName: "hail-samar-brand" },
+          },
+          {
+            urlPattern: ({ request, url }) =>
+              request.mode === "navigate" &&
+              url.origin === self.location.origin &&
+              !url.pathname.startsWith("/~oauth"),
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "hail-samar-pages",
+              networkTimeoutSeconds: 3,
+            },
+          },
+          {
+            urlPattern: ({ request, url }) =>
+              url.origin === self.location.origin &&
+              url.pathname.startsWith("/assets/") &&
+              /(^|\/)[^/]+-[a-zA-Z0-9_-]{8,}\.(?:js|css|png|jpe?g|svg|webp|woff2?)$/i.test(url.pathname) &&
+              ["script", "style", "image", "font"].includes(request.destination),
+            handler: "CacheFirst",
+            options: { cacheName: "hail-samar-assets" },
+          },
+        ],
+      },
+    }),
+  ],
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
