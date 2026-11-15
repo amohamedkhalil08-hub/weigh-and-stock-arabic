@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { computePiecesPerTon, computeTotalPieces, computeTotalTons, getItemBalance, type MovementKind, type StockItem, type StockMovement, type StockSnapshot } from "@/lib/stock-domain";
 import { readStockSnapshot, restoreStockSnapshot, saveStockItem, saveStockMovement } from "@/lib/stock-storage";
 import { registerOfflineSupport } from "@/lib/offline-registration";
-import brandLogo from "@/assets/hail-samar-brand.jpg";
+import brandLogo from "@/assets/hail-samar-brand.jpg.asset.json";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -167,7 +167,7 @@ function StockApp() {
     <div className="stock-app min-h-screen bg-background text-foreground" dir="rtl">
       <header className="stock-header">
         <Button variant="ghost" size="icon" className="header-home" aria-label="الرئيسية" onClick={() => setScreen("home")}><Home aria-hidden="true" /></Button>
-        <img className="header-logo" src={brandLogo} alt="محمد الشريف — إدارة المخازن، هايل سمر للتجارة" />
+        <img className="header-logo" src={brandLogo.url} alt="محمد الشريف — إدارة المخازن، هايل سمر للتجارة" />
         <div className="header-copy"><p className="eyebrow">هايل سمر للتجارة</p><h1>إدارة المخازن</h1><p className="header-location">فرع الحديدة <span aria-hidden="true">·</span> محمد الشريف</p></div>
         <span className="offline-indicator"><span aria-hidden="true" /> محلي</span>
       </header>
@@ -197,7 +197,7 @@ function StockApp() {
 
 function HomeScreen({ itemCount, totalPieces, onNavigate }: { itemCount: number; totalPieces: number; onNavigate: (screen: Screen) => void }) {
   return <div className="home-layout">
-    <section className="home-hero"><div className="hero-brand-image"><img src={brandLogo} alt="شعار محمد الشريف — إدارة المخازن — هايل سمر للتجارة" /></div><div className="hero-content"><p className="eyebrow">فرع الحديدة</p><h2>مخزونك، بين يديك.</h2><p>إدارة يومية واضحة لأصناف المخزن وحركاته.</p><Button onClick={() => onNavigate("inbound")} className="primary-action"><ArrowDownToLine aria-hidden="true" /> تسجيل وارد</Button></div></section>
+    <section className="home-hero"><div className="hero-brand-image"><img src={brandLogo.url} alt="شعار محمد الشريف — إدارة المخازن — هايل سمر للتجارة" /></div><div className="hero-content"><p className="eyebrow">فرع الحديدة</p><h2>مخزونك، بين يديك.</h2><p>إدارة يومية واضحة لأصناف المخزن وحركاته.</p><Button onClick={() => onNavigate("inbound")} className="primary-action"><ArrowDownToLine aria-hidden="true" /> تسجيل وارد</Button></div></section>
     <section className="summary-strip" aria-label="ملخص المخزون"><div className="summary-stat"><span>عدد الأصناف</span><strong>{formatNumber(itemCount)}</strong></div><div className="summary-stat"><span>إجمالي الرصيد</span><strong>{formatNumber(totalPieces)} <small>حبة</small></strong></div><div className="summary-stat"><span>حفظ البيانات</span><strong>محلي</strong></div></section>
     <section className="home-actions" aria-label="الشاشات">
       <HomeAction icon={PackagePlus} label="إضافة صنف" onClick={() => onNavigate("items")} />
@@ -262,7 +262,7 @@ function OutboundScreen({ items, movements, selectedInvoice, onSubmit, onSelectI
 }
 
 function InvoicePreview({ invoice, item }: { invoice: StockMovement; item: StockItem | undefined }) {
-  return <article className="invoice-paper" aria-label={`فاتورة رقم ${invoice.invoiceNumber}`}><div className="invoice-brand"><img src={brandLogo} alt="شعار هايل سمر للتجارة" /><div><strong>هايل سمر للتجارة</strong><span>فرع الحديدة · إدارة المخازن</span></div></div><div className="invoice-rule" /><div className="invoice-title-line"><h4>فاتورة صادر</h4><span>{invoice.invoiceNumber}</span></div><p className="invoice-date">التاريخ: {formatDate(invoice.createdAt)}</p><dl className="invoice-details"><InvoiceValue label="الصنف" value={item?.name ?? "صنف محفوظ"} /><InvoiceValue label="عدد البنادل" value={formatNumber(invoice.bundleCount)} /><InvoiceValue label="عدد الحبات" value={formatNumber(invoice.totalPieces)} /><InvoiceValue label="وزن الحبة" value={`${formatNumber(invoice.pieceWeightKg)} كجم`} /><InvoiceValue label="إجمالي الوزن" value={`${formatNumber(invoice.totalTons)} طن`} />{invoice.note && <InvoiceValue label="ملاحظة" value={invoice.note} />}</dl><div className="invoice-rule" /><p className="invoice-signature">استلمت الأصناف الموضحة أعلاه</p><div className="invoice-sign-lines"><span>المستلم</span><span>المسؤول</span></div><Button className="print-button no-print" onClick={() => window.print()}><Printer aria-hidden="true" /> طباعة الفاتورة</Button></article>;
+  return <article className="invoice-paper" aria-label={`فاتورة رقم ${invoice.invoiceNumber}`}><div className="invoice-brand"><img src={brandLogo.url} alt="شعار هايل سمر للتجارة" /><div><strong>هايل سمر للتجارة</strong><span>فرع الحديدة · إدارة المخازن</span></div></div><div className="invoice-rule" /><div className="invoice-title-line"><h4>فاتورة صادر</h4><span>{invoice.invoiceNumber}</span></div><p className="invoice-date">التاريخ: {formatDate(invoice.createdAt)}</p><dl className="invoice-details"><InvoiceValue label="الصنف" value={item?.name ?? "صنف محفوظ"} /><InvoiceValue label="عدد البنادل" value={formatNumber(invoice.bundleCount)} /><InvoiceValue label="عدد الحبات" value={formatNumber(invoice.totalPieces)} /><InvoiceValue label="وزن الحبة" value={`${formatNumber(invoice.pieceWeightKg)} كجم`} /><InvoiceValue label="إجمالي الوزن" value={`${formatNumber(invoice.totalTons)} طن`} />{invoice.note && <InvoiceValue label="ملاحظة" value={invoice.note} />}</dl><div className="invoice-rule" /><p className="invoice-signature">استلمت الأصناف الموضحة أعلاه</p><div className="invoice-sign-lines"><span>المستلم</span><span>المسؤول</span></div><Button className="print-button no-print" onClick={() => window.print()}><Printer aria-hidden="true" /> طباعة الفاتورة</Button></article>;
 }
 
 function InvoiceValue({ label, value }: { label: string; value: string }) {
