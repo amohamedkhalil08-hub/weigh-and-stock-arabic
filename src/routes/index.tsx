@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent,
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { computePiecesPerTon, computeTotalPieces, computeTotalTons, getItemBalance, type MovementKind, type StockItem, type StockMovement, type StockSnapshot } from "@/lib/stock-domain";
-import { readStockSnapshot, restoreStockSnapshot, saveStockItem, saveStockMovement } from "@/lib/stock-storage";
+import { computePiecesPerTon, computeTotalPieces, computeTotalTons, createOpeningStockMovement, getItemBalance, type CountryOfOrigin, type MovementKind, type StockItem, type StockMovement, type StockSnapshot } from "@/lib/stock-domain";
+import { readStockSnapshot, restoreStockSnapshot, saveStockItemWithOpeningMovement, saveStockMovement } from "@/lib/stock-storage";
 import { registerOfflineSupport } from "@/lib/offline-registration";
 import brandLogo from "@/assets/hail-samar-brand.jpg.asset.json";
 
@@ -64,17 +64,22 @@ function StockApp() {
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const name = String(form.get("name") ?? "").trim();
+    const bundleCount = Number(form.get("bundleCount"));
     const piecesPerBundle = Number(form.get("piecesPerBundle"));
     const pieceWeightKg = Number(form.get("pieceWeightKg"));
-    if (!name || piecesPerBundle <= 0 || pieceWeightKg <= 0) {
-      showError("أدخل اسم الصنف وعدد الحبات ووزن الحبة بقيم أكبر من صفر.");
+    const countryValue = String(form.get("countryOfOrigin") ?? "");
+    if (!name || !Number.isFinite(bundleCount) || bundleCount <= 0 || !Number.isFinite(piecesPerBundle) || piecesPerBundle <= 0 || !Number.isFinite(pieceWeightKg) || pieceWeightKg <= 0 || !["اليمن", "السعودية", "الصين"].includes(countryValue)) {
+      showError("أدخل بيانات الصنف وعدد البنادل والحبات ووزن الحبة واختر بلد الصنع.");
       return;
     }
     try {
-      await saveStockItem({ id: crypto.randomUUID(), name, piecesPerBundle, pieceWeightKg, createdAt: new Date().toISOString() });
+      const createdAt = new Date().toISOString();
+      const item: StockItem = { id: crypto.randomUUID(), name, piecesPerBundle, pieceWeightKg, countryOfOrigin: countryValue as CountryOfOrigin, createdAt };
+      const openingMovement = createOpeningStockMovement(item, bundleCount, crypto.randomUUID(), createdAt);
+      await saveStockItemWithOpeningMovement(item, openingMovement);
       await refresh();
       formElement.reset();
-      showNotice("تم حفظ الصنف على هذا الجهاز.");
+      showNotice("تم حفظ الصنف ورصيده الافتتاحي على هذا الجهاز.");
     } catch {
       showError("تعذر حفظ الصنف. تحقق من مساحة التخزين في الجهاز.");
     }
@@ -178,7 +183,7 @@ function StockApp() {
         {(notice || error) && <div className={error ? "app-message error-message" : "app-message"} role="status" aria-live="polite">{error || notice}</div>}
         {loading ? <section className="content-section"><p>جارٍ فتح المخزون المحفوظ…</p></section> : <>
           {screen === "home" && <HomeScreen itemCount={snapshot.items.length} totalPieces={totalPieces} onNavigate={setScreen} />}
-          {screen === "items" && <ItemsScreen items={snapshot.items} movements={snapshot.movements} onSubmit={handleAddItem} />}
+          {screen === "items" && <ItemsScreen key={snapshot.items.length} items={snapshot.items} movements={snapshot.movements} onSubmit={handleAddItem} />}
           {screen === "balances" && <BalancesScreen items={snapshot.items} movements={snapshot.movements} />}
           {screen === "inbound" && <MovementScreen key={snapshot.movements.length} kind="in" items={snapshot.items} movements={snapshot.movements} onSubmit={(event) => void handleAddMovement("in", event)} />}
           {screen === "outbound" && <OutboundScreen items={snapshot.items} movements={snapshot.movements} selectedInvoice={selectedInvoice} onSubmit={(event) => void handleAddMovement("out", event)} onSelectInvoice={setSelectedInvoice} />}
@@ -214,16 +219,28 @@ function HomeAction({ icon: Icon, label, onClick }: { icon: LucideIcon; label: s
 }
 
 function ItemsScreen({ items, movements, onSubmit }: { items: StockItem[]; movements: StockMovement[]; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  const [bundleCountInput, setBundleCountInput] = useState("");
+  const [piecesPerBundleInput, setPiecesPerBundleInput] = useState("");
+  const [pieceWeightInput, setPieceWeightInput] = useState("");
+  const bundles = Number(bundleCountInput) || 0;
+  const piecesPerBundle = Number(piecesPerBundleInput) || 0;
+  const pieceWeightKg = Number(pieceWeightInput) || 0;
+  const validInputs = bundles > 0 && piecesPerBundle > 0 && pieceWeightKg > 0;
+  const totalPieces = validInputs ? computeTotalPieces(bundles, piecesPerBundle) : 0;
+  const piecesPerTon = validInputs ? computePiecesPerTon(pieceWeightKg) : 0;
+  const totalTons = validInputs ? computeTotalTons(totalPieces, pieceWeightKg) : 0;
   return <section className="content-section">
     <SectionHeading icon={PackagePlus} title="إضافة صنف" subtitle="تعريف الصنف ووحدة التعبئة ووزن الحبة." />
     <form className="stock-form" onSubmit={onSubmit}>
       <Field label="اسم الصنف"><Input name="name" required maxLength={120} placeholder="مثال: أكياس أسمنت" /></Field>
-      <div className="form-grid two-columns"><Field label="عدد الحبات في البندل"><Input name="piecesPerBundle" type="number" min="1" step="1" required placeholder="٥٠" /></Field><Field label="وزن الحبة بالكيلوغرام"><Input name="pieceWeightKg" type="number" min="0.001" step="any" required placeholder="٢٥" /></Field></div>
+      <div className="form-grid two-columns"><Field label="عدد البنادل"><Input name="bundleCount" type="number" min="1" step="1" required value={bundleCountInput} onChange={(event) => setBundleCountInput(event.target.value)} placeholder="مثال: ١٠" /></Field><Field label="عدد الحبات في البندل"><Input name="piecesPerBundle" type="number" min="1" step="1" required value={piecesPerBundleInput} onChange={(event) => setPiecesPerBundleInput(event.target.value)} placeholder="٥٠" /></Field></div>
+      <div className="form-grid two-columns"><Field label="وزن الحبة بالكيلوغرام"><Input name="pieceWeightKg" type="number" min="0.001" step="any" required value={pieceWeightInput} onChange={(event) => setPieceWeightInput(event.target.value)} placeholder="٢٥" /></Field><Field label="بلد الصنع"><select name="countryOfOrigin" className="stock-select" defaultValue="اليمن" required><option value="اليمن">اليمن</option><option value="السعودية">السعودية</option><option value="الصين">الصين</option></select></Field></div>
       <p className="field-hint">تُستخدم بيانات التعبئة والوزن تلقائياً في حركات الصنف.</p>
+      <ItemCalculationPreview pieces={totalPieces} bundles={bundles} piecesPerBundle={piecesPerBundle} piecesPerTon={piecesPerTon} tons={totalTons} />
       <Button type="submit"><PackagePlus aria-hidden="true" /> حفظ الصنف</Button>
     </form>
     <div className="section-divider" /><div className="section-subheading"><h3>الأصناف المسجلة</h3><span>{formatNumber(items.length)} صنف</span></div>
-    {items.length === 0 ? <EmptyState text="لا توجد أصناف مسجلة بعد." /> : <div className="table-scroll"><table><thead><tr><th>الصنف</th><th>حبة / بندل</th><th>وزن الحبة</th><th>الرصيد</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><th scope="row">{item.name}</th><td>{formatNumber(item.piecesPerBundle)}</td><td>{formatNumber(item.pieceWeightKg)} كجم</td><td>{formatNumber(getItemBalance(item.id, movements))}</td></tr>)}</tbody></table></div>}
+    {items.length === 0 ? <EmptyState text="لا توجد أصناف مسجلة بعد." /> : <div className="table-scroll"><table><thead><tr><th>الصنف</th><th>بلد الصنع</th><th>حبة / بندل</th><th>وزن الحبة</th><th>الرصيد</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><th scope="row">{item.name}</th><td>{item.countryOfOrigin ?? "—"}</td><td>{formatNumber(item.piecesPerBundle)}</td><td>{formatNumber(item.pieceWeightKg)} كجم</td><td>{formatNumber(getItemBalance(item.id, movements))}</td></tr>)}</tbody></table></div>}
   </section>;
 }
 
@@ -286,6 +303,10 @@ function SearchScreen({ searchTerm, onSearch, items, movements }: { searchTerm: 
 
 function CalculationPreview({ pieces, bundles, piecesPerBundle, piecesPerTon, tons }: { pieces: number; bundles: number; piecesPerBundle: number; piecesPerTon: number; tons: number }) {
   return <div className="calculation-preview" aria-live="polite"><p><span>إجمالي الكمية</span><strong>{formatNumber(pieces)} حبة</strong><small>{formatNumber(bundles)} بندل × {formatNumber(piecesPerBundle)} حبة</small></p><p><span>عدد الحبات في الطن</span><strong>{formatNumber(piecesPerTon)} حبة</strong><small>١٠٠٠ ÷ وزن الحبة</small></p><p><span>إجمالي الوزن</span><strong>{formatNumber(tons)} طن</strong><small>عدد الحبات × الوزن ÷ ١٠٠٠</small></p></div>;
+}
+
+function ItemCalculationPreview({ pieces, bundles, piecesPerBundle, piecesPerTon, tons }: { pieces: number; bundles: number; piecesPerBundle: number; piecesPerTon: number; tons: number }) {
+  return <div className="item-calculation-preview" aria-label="نتائج الحساب المباشر" aria-live="polite"><p><span>إجمالي الكمية (حبة)</span><strong>{formatNumber(pieces)} حبة</strong><small>{formatNumber(bundles)} بندل × {formatNumber(piecesPerBundle)} حبة</small></p><p><span>عدد الحبات في الطن</span><strong>{formatNumber(piecesPerTon)} حبة</strong><small>١٠٠٠ ÷ وزن الحبة</small></p><p><span>إجمالي الوزن بالطن</span><strong>{formatNumber(tons)} طن</strong><small>إجمالي الكمية ÷ عدد الحبات في الطن</small></p></div>;
 }
 
 function SectionHeading({ icon: Icon, title, subtitle }: { icon: LucideIcon; title: string; subtitle: string }) {
