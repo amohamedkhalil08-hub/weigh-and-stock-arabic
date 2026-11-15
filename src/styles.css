@@ -308,10 +308,19 @@
 }
 
 @media print {
-  body { background: white; color: black; }
+  :root {
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.12 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.12 0 0);
+    --primary: oklch(0.12 0 0);
+    --muted-foreground: oklch(0.38 0 0);
+    --border: oklch(0.78 0 0);
+  }
+  body { background: var(--color-background); color: var(--color-foreground); }
   .stock-header, .desktop-nav, .mobile-nav, .stock-footer, .stock-main > :not(.outbound-layout), .outbound-layout > .content-section:first-child, .invoice-history, .no-print { display: none !important; }
   .stock-main, .outbound-layout, .invoice-section { width: 100%; max-width: none; margin: 0; padding: 0; border: 0; }
   .invoice-paper { max-width: none; padding: 0; color: black; background: white; }
   .invoice-brand strong, .invoice-title-line h4 { color: black; }
-  .invoice-brand span, .invoice-date, .invoice-details dt, .invoice-signature, .invoice-sign-lines { color: #444; }
+  .invoice-brand span, .invoice-date, .invoice-details dt, .invoice-signature, .invoice-sign-lines { color: var(--color-muted-foreground); }
 }
