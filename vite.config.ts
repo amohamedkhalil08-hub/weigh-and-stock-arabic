@@ -24,6 +24,14 @@ export default defineConfig({
         runtimeCaching: [
           {
             urlPattern: ({ request, url }) =>
+              url.origin === self.location.origin &&
+              request.destination === "image" &&
+              /^\/__l5e\/assets-v1\/[a-f0-9-]{36}\/hail-samar-brand\.jpg$/i.test(url.pathname),
+            handler: "CacheFirst",
+            options: { cacheName: "hail-samar-brand" },
+          },
+          {
+            urlPattern: ({ request, url }) =>
               request.mode === "navigate" &&
               url.origin === self.location.origin &&
               !url.pathname.startsWith("/~oauth"),
