@@ -61,7 +61,8 @@ function StockApp() {
 
   async function handleAddItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const name = String(form.get("name") ?? "").trim();
     const piecesPerBundle = Number(form.get("piecesPerBundle"));
     const pieceWeightKg = Number(form.get("pieceWeightKg"));
@@ -72,7 +73,7 @@ function StockApp() {
     try {
       await saveStockItem({ id: crypto.randomUUID(), name, piecesPerBundle, pieceWeightKg, createdAt: new Date().toISOString() });
       await refresh();
-      event.currentTarget.reset();
+      formElement.reset();
       showNotice("تم حفظ الصنف على هذا الجهاز.");
     } catch {
       showError("تعذر حفظ الصنف. تحقق من مساحة التخزين في الجهاز.");
@@ -81,7 +82,8 @@ function StockApp() {
 
   async function handleAddMovement(kind: MovementKind, event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const item = snapshot.items.find((candidate) => candidate.id === form.get("itemId"));
     const bundleCount = Number(form.get("bundleCount"));
     if (!item || bundleCount <= 0) {
@@ -106,7 +108,7 @@ function StockApp() {
     try {
       await saveStockMovement(movement);
       await refresh();
-      event.currentTarget.reset();
+      formElement.reset();
       setSelectedInvoice(kind === "out" ? movement : null);
       showNotice(kind === "in" ? "تم تسجيل الوارد وحفظه محلياً." : "تم تسجيل الصادر وإصدار الفاتورة.");
       if (kind === "out") setScreen("outbound");
@@ -143,7 +145,8 @@ function StockApp() {
   }
 
   async function importBackup(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
+    const inputElement = event.currentTarget;
+    const file = inputElement.files?.[0];
     if (!file) return;
     try {
       const data = JSON.parse(await file.text()) as Partial<StockSnapshot>;
@@ -154,7 +157,7 @@ function StockApp() {
     } catch {
       showError("تعذرت استعادة الملف. اختر نسخة احتياطية صالحة.");
     } finally {
-      event.currentTarget.value = "";
+      inputElement.value = "";
     }
   }
 
