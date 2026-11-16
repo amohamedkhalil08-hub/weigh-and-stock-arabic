@@ -32,3 +32,7 @@ use the editor.
 ## Stock item creation
 
 - Persist a newly created item and its opening inbound movement in one IndexedDB transaction because stock balances are derived from movements.
+
+## Offline app shell
+
+- Generate the app-shell service worker with `vite-plugin-pwa` and register it only through the guarded browser wrapper; preview and development contexts must never register it.

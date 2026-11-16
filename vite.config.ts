@@ -20,7 +20,9 @@ export default defineConfig({
       filename: "sw.js",
       workbox: {
         navigateFallback: null,
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,jpg,jpeg,webp,woff2}"],
+        clientsClaim: true,
+        skipWaiting: true,
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,jpg,jpeg,webp,woff2,json}"],
         runtimeCaching: [
           {
             urlPattern: ({ request, url }) =>
