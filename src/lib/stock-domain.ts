@@ -23,6 +23,7 @@ export type StockMovement = {
   totalTons: number;
   note: string;
   createdAt: string;
+  customer?: string;
   invoiceNumber?: string;
 };
 
@@ -74,6 +75,7 @@ export function normalizeStockMovement(value: unknown, fallbackId: string): Stoc
     totalTons: numberOrZero(record["totalTons"]),
     note: typeof record["note"] === "string" ? record["note"] : "",
     createdAt: typeof record["createdAt"] === "string" ? record["createdAt"] : new Date(0).toISOString(),
+    ...(typeof record["customer"] === "string" && { customer: record["customer"] }),
   } as StockMovement;
 }
 

@@ -1,11 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Archive, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, Boxes, FileBarChart, FileText, Home, PackagePlus, Printer, Search, ShieldCheck, Weight, type LucideIcon } from "lucide-react";
+import { Archive, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, Boxes, FileBarChart, FileText, Home, PackagePlus, Plus, Printer, Search, ShieldCheck, Trash2, Weight, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { buildBackupFile, buildMovementCsv, downloadBlob, getMovementQuantities, localDateStamp } from "@/lib/data-exports";
+import { downloadInvoicePdf } from "@/lib/invoice-pdf";
 import { Input } from "@/components/ui/input";
 import { computePiecesPerTon, computeTotalPieces, computeTotalTons, createOpeningStockMovement, getItemBalance, type CountryOfOrigin, type MovementKind, type StockItem, type StockMovement, type StockSnapshot } from "@/lib/stock-domain";
-import { readStockSnapshot, restoreStockSnapshot, saveStockItemWithOpeningMovement, saveStockMovement } from "@/lib/stock-storage";
+import { deleteStockItemWithBackup, readStockSnapshot, restoreStockSnapshot, saveStockItem, saveStockItemWithOpeningMovement, saveStockMovements } from "@/lib/stock-storage";
 import { registerOfflineSupport } from "@/lib/offline-registration";
 import brandLogo from "@/assets/hail-samar-brand.jpg.asset.json";
 
@@ -36,14 +38,17 @@ const navigation: { id: Screen; icon: LucideIcon }[] = [
   { id: "report", icon: FileBarChart }, { id: "search", icon: Search },
 ];
 
-function StockApp() {
+export function StockApp() {
   const [screen, setScreen] = useState<Screen>("home");
   const [snapshot, setSnapshot] = useState<StockSnapshot>({ items: [], movements: [] });
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedInvoice, setSelectedInvoice] = useState<StockMovement | null>(null);
+  const [selectedReportItem, setSelectedReportItem] = useState<StockItem | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [busyAction, setBusyAction] = useState<"pdf" | "backup" | "csv" | null>(null);
+  const exportLock = useRef(false);
   const restoreInput = useRef<HTMLInputElement>(null);
 
   const refresh = async () => setSnapshot(await readStockSnapshot());
@@ -87,66 +92,85 @@ function StockApp() {
 
   async function handleAddMovement(kind: MovementKind, event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const item = snapshot.items.find((candidate) => candidate.id === form.get("itemId"));
-    const bundleCount = Number(form.get("bundleCount"));
-    if (!item || bundleCount <= 0) {
-      showError("اختر صنفاً وأدخل عدد البنادل بقيمة أكبر من صفر.");
-      return;
+    const form = new FormData(event.currentTarget);
+    const itemIds = form.getAll("itemId").map(String);
+    const bundleCounts = form.getAll("bundleCount").map((value) => Number(value));
+    const note = String(form.get("note") ?? "").trim();
+    const customer = String(form.get("customer") ?? "").trim();
+    const lines = itemIds.map((itemId, index) => ({ item: snapshot.items.find((candidate) => candidate.id === itemId), bundleCount: bundleCounts[index] ?? 0 }));
+    if (!lines.length || lines.some((line) => !line.item || !Number.isFinite(line.bundleCount) || line.bundleCount <= 0)) {
+      showError("اختر صنفاً وأدخل عدد البنادل لكل صنف بقيمة أكبر من صفر."); return;
     }
-    const pieces = computeTotalPieces(bundleCount, item.piecesPerBundle);
-    if (kind === "out" && pieces > getItemBalance(item.id, snapshot.movements)) {
-      showError("الكمية المطلوبة أكبر من الرصيد المتاح للصنف.");
-      return;
+    for (const line of lines) {
+      if (kind === "out" && line.item && computeTotalPieces(line.bundleCount, line.item.piecesPerBundle) > getItemBalance(line.item.id, snapshot.movements)) {
+        showError(`الكمية المطلوبة أكبر من الرصيد المتاح للصنف: ${line.item?.name ?? ""}.`); return;
+      }
     }
     const createdAt = new Date().toISOString();
-    const movement: StockMovement = {
-      id: crypto.randomUUID(), itemId: item.id, kind, bundleCount,
-      piecesPerBundle: item.piecesPerBundle, totalPieces: pieces,
-      pieceWeightKg: item.pieceWeightKg,
-      piecesPerTon: computePiecesPerTon(item.pieceWeightKg),
-      totalTons: computeTotalTons(pieces, item.pieceWeightKg),
-      note: String(form.get("note") ?? "").trim(), createdAt,
-      ...(kind === "out" && { invoiceNumber: `HS-${createdAt.slice(0, 10).replaceAll("-", "")}-${String(snapshot.movements.filter((entry) => entry.invoiceNumber).length + 1).padStart(3, "0")}` }),
-    };
+    const invoiceNumber = kind === "out" ? `HS-${createdAt.slice(0, 10).replaceAll("-", "")}-${String(snapshot.movements.filter((entry) => entry.invoiceNumber).length + 1).padStart(3, "0")}` : undefined;
+    const newMovements: StockMovement[] = lines.map(({ item, bundleCount }) => {
+      const pieces = computeTotalPieces(bundleCount, item!.piecesPerBundle);
+      return { id: crypto.randomUUID(), itemId: item!.id, kind, bundleCount, piecesPerBundle: item!.piecesPerBundle, totalPieces: pieces, pieceWeightKg: item!.pieceWeightKg, piecesPerTon: computePiecesPerTon(item!.pieceWeightKg), totalTons: computeTotalTons(pieces, item!.pieceWeightKg), note, createdAt, ...(customer && { customer }), ...(invoiceNumber && { invoiceNumber }) };
+    });
     try {
-      await saveStockMovement(movement);
+      await saveStockMovements(newMovements);
       await refresh();
-      formElement.reset();
-      setSelectedInvoice(kind === "out" ? movement : null);
-      showNotice(kind === "in" ? "تم تسجيل الوارد وحفظه محلياً." : "تم تسجيل الصادر وإصدار الفاتورة.");
+      setSelectedInvoice(kind === "out" ? (newMovements[0] ?? null) : null);
+      showNotice(kind === "in" ? "تم تسجيل الوارد وحفظه محلياً." : "تم تسجيل الصادر متعدد الأصناف وإصدار الفاتورة.");
       if (kind === "out") setScreen("outbound");
-    } catch {
-      showError("تعذر حفظ الحركة على هذا الجهاز.");
-    }
+    } catch { showError("تعذر حفظ الحركة على هذا الجهاز."); }
   }
 
-  function downloadFile(contents: string, type: string, filename: string) {
-    const file = new Blob([contents], { type });
-    const url = URL.createObjectURL(file);
-    const link = document.createElement("a");
-    link.href = url; link.download = filename; link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  async function handleUpdateItem(item: StockItem) {
+    try { await saveStockItem(item); await refresh(); setSelectedReportItem(null); showNotice("تم تحديث بيانات الصنف."); }
+    catch { showError("تعذر تحديث الصنف."); }
+  }
+
+  async function handleDeleteItem(item: StockItem) {
+    if (!window.confirm(`هل أنت متأكد من حذف الصنف «${item.name}» وجميع حركاته؟ سيتم حفظ نسخة احتياطية تلقائية قبل الحذف.`)) return;
+    try { await deleteStockItemWithBackup(item.id); await refresh(); setSelectedReportItem(null); showNotice("تم حذف الصنف وحركاته بعد التأكيد."); }
+    catch { showError("تعذر حذف الصنف."); }
+  }
+
+  async function runExport(action: "pdf" | "backup" | "csv", prepare: () => Promise<void>, successMessage: string) {
+    if (exportLock.current) return;
+    exportLock.current = true;
+    setBusyAction(action);
+    showNotice("جاري التجهيز...");
+    try {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+      await prepare();
+      showNotice(successMessage);
+    } catch (caught) {
+      console.error("File export failed", caught);
+      showError(caught instanceof Error ? `تعذر إنشاء الملف: ${caught.message}` : "تعذر إنشاء الملف. حاول مرة أخرى.");
+    } finally {
+      exportLock.current = false;
+      setBusyAction(null);
+    }
   }
 
   function exportCsv() {
-    const rows = [
-      ["الصنف", "عدد البنادل الوارد", "عدد البنادل الصادر", "الوارد (حبة)", "الصادر (حبة)", "الرصيد (حبة)"],
-      ...snapshot.items.map((item) => {
-        const entries = snapshot.movements.filter((entry) => entry.itemId === item.id);
-        const incoming = entries.filter((entry) => entry.kind === "in");
-        const outgoing = entries.filter((entry) => entry.kind === "out");
-        return [item.name, incoming.reduce((sum, entry) => sum + entry.bundleCount, 0), outgoing.reduce((sum, entry) => sum + entry.bundleCount, 0), incoming.reduce((sum, entry) => sum + entry.totalPieces, 0), outgoing.reduce((sum, entry) => sum + entry.totalPieces, 0), getItemBalance(item.id, snapshot.movements)];
-      }),
-    ];
-    downloadFile(`\ufeff${rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n")}`, "text/csv;charset=utf-8", "كشف_مخزون_هايل_سمر.csv");
-    showNotice("تم تجهيز كشف المخزون بصيغة CSV.");
+    void runExport("csv", async () => {
+      const csv = buildMovementCsv(snapshot);
+      downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `كشف-${localDateStamp()}.csv`);
+    }, "تم تنزيل كشف CSV بنجاح");
   }
 
   function exportBackup() {
-    downloadFile(JSON.stringify({ version: 1, ...snapshot }, null, 2), "application/json", "نسخة_احتياطية_مخازن_هايل_سمر.json");
-    showNotice("تم تنزيل النسخة الاحتياطية.");
+    void runExport("backup", async () => {
+      const payload = buildBackupFile(snapshot);
+      const contents = JSON.stringify(payload, null, 2);
+      downloadBlob(new Blob([contents], { type: "application/json;charset=utf-8" }), `نسخة-احتياطية-${localDateStamp()}.json`);
+    }, "تم تنزيل النسخة الاحتياطية بنجاح");
+  }
+
+  function exportInvoice(invoiceNumber: string) {
+    void runExport("pdf", async () => {
+      const invoiceElement = document.querySelector<HTMLElement>(".invoice-paper");
+      if (!invoiceElement) throw new Error("لم يتم العثور على الفاتورة المعروضة.");
+      await downloadInvoicePdf(invoiceElement, invoiceNumber);
+    }, "تم تنزيل الفاتورة بصيغة PDF بنجاح");
   }
 
   async function importBackup(event: ChangeEvent<HTMLInputElement>) {
@@ -154,9 +178,10 @@ function StockApp() {
     const file = inputElement.files?.[0];
     if (!file) return;
     try {
-      const data = JSON.parse(await file.text()) as Partial<StockSnapshot>;
-      if (!Array.isArray(data.items) || !Array.isArray(data.movements)) { showError("ملف النسخة الاحتياطية غير صالح."); return; }
-      await restoreStockSnapshot({ items: data.items, movements: data.movements });
+      const data = JSON.parse(await file.text()) as Partial<StockSnapshot> & { snapshot?: Partial<StockSnapshot>; data?: Partial<StockSnapshot> };
+      const payload = data.snapshot ?? data.data ?? data;
+      if (!Array.isArray(payload.items) || !Array.isArray(payload.movements)) { showError("ملف النسخة الاحتياطية غير صالح أو لا يحتوي المخزون والحركات."); return; }
+      await restoreStockSnapshot({ items: payload.items, movements: payload.movements });
       await refresh();
       showNotice("تمت استعادة البيانات على هذا الجهاز.");
     } catch {
@@ -186,10 +211,11 @@ function StockApp() {
           {screen === "items" && <ItemsScreen key={snapshot.items.length} items={snapshot.items} movements={snapshot.movements} onSubmit={handleAddItem} />}
           {screen === "balances" && <BalancesScreen items={snapshot.items} movements={snapshot.movements} />}
           {screen === "inbound" && <MovementScreen key={snapshot.movements.length} kind="in" items={snapshot.items} movements={snapshot.movements} onSubmit={(event) => void handleAddMovement("in", event)} />}
-          {screen === "outbound" && <OutboundScreen items={snapshot.items} movements={snapshot.movements} selectedInvoice={selectedInvoice} onSubmit={(event) => void handleAddMovement("out", event)} onSelectInvoice={setSelectedInvoice} />}
-          {screen === "report" && <ReportScreen items={snapshot.items} movements={snapshot.movements} onExportCsv={exportCsv} onBackup={exportBackup} onRestore={() => restoreInput.current?.click()} />}
+          {screen === "outbound" && <OutboundScreen items={snapshot.items} movements={snapshot.movements} selectedInvoice={selectedInvoice} busyAction={busyAction} onExportPdf={exportInvoice} onSubmit={(event) => void handleAddMovement("out", event)} onSelectInvoice={setSelectedInvoice} />}
+          {screen === "report" && <ReportScreen items={snapshot.items} movements={snapshot.movements} onSelectItem={setSelectedReportItem} onExportCsv={exportCsv} onBackup={exportBackup} busyAction={busyAction} onRestore={() => restoreInput.current?.click()} />}
           {screen === "search" && <SearchScreen searchTerm={searchTerm} onSearch={setSearchTerm} items={matches} movements={snapshot.movements} />}
         </>}
+        {selectedReportItem && <ItemDetailsDialog item={selectedReportItem} movements={snapshot.movements} onClose={() => setSelectedReportItem(null)} onSave={handleUpdateItem} onDelete={() => void handleDeleteItem(selectedReportItem)} />}
         <input ref={restoreInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => void importBackup(event)} aria-label="اختر ملف النسخة الاحتياطية" />
       </main>
       <footer className="stock-footer"><ShieldCheck aria-hidden="true" /><span>البيانات محفوظة على هذا الجهاز فقط</span></footer>
@@ -251,48 +277,66 @@ function BalancesScreen({ items, movements }: { items: StockItem[]; movements: S
 }
 
 function MovementScreen({ kind, items, movements, onSubmit }: { kind: MovementKind; items: StockItem[]; movements: StockMovement[]; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  const [selectedId, setSelectedId] = useState("");
-  const [bundleCount, setBundleCount] = useState("");
-  const item = items.find((candidate) => candidate.id === selectedId) ?? items[0];
-  const bundles = Number(bundleCount) || 0;
-  const pieces = item ? computeTotalPieces(bundles, item.piecesPerBundle) : 0;
-  const piecesPerTon = item ? computePiecesPerTon(item.pieceWeightKg) : 0;
-  const tons = item ? computeTotalTons(pieces, item.pieceWeightKg) : 0;
+  const [rows, setRows] = useState([{ key: crypto.randomUUID(), itemId: "", bundleCount: "" }]);
   const isInbound = kind === "in";
+  const updateRow = (index: number, patch: Partial<(typeof rows)[number]>) => setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
   return <section className="content-section">
-    <SectionHeading icon={isInbound ? ArrowDownToLine : ArrowUpFromLine} title={isInbound ? "تسجيل وارد" : "تسجيل صادر"} subtitle={isInbound ? "أضف الكمية المستلمة إلى رصيد الصنف." : "تُخصم الكمية من الرصيد ويُصدر لها رقم فاتورة."} />
+    <SectionHeading icon={isInbound ? ArrowDownToLine : ArrowUpFromLine} title={isInbound ? "تسجيل وارد" : "تسجيل صادر"} subtitle={isInbound ? "أضف صنفاً أو أكثر في حركة وارد واحدة." : "أضف صنفاً أو أكثر في حركة صادر واحدة وفاتورة موحدة."} />
     {items.length === 0 ? <EmptyState text="أضف صنفاً أولاً قبل تسجيل الحركة." /> : <form className="stock-form" onSubmit={onSubmit}>
-      <Field label="الصنف"><select name="itemId" className="stock-select" value={item?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>{items.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></Field>
-      {item && <div className="available-balance"><span>الرصيد المتاح</span><strong>{formatNumber(getItemBalance(item.id, movements))} حبة</strong></div>}
-      <Field label="عدد البنادل"><Input name="bundleCount" type="number" min="1" step="1" required value={bundleCount} onChange={(event) => setBundleCount(event.target.value)} placeholder="أدخل عدد البنادل" /></Field>
-      <Field label="ملاحظة (اختياري)"><Input name="note" maxLength={250} placeholder="اسم المورد أو تفاصيل الحركة" /></Field>
-      <CalculationPreview pieces={pieces} bundles={bundles} piecesPerBundle={item?.piecesPerBundle ?? 0} piecesPerTon={piecesPerTon} tons={tons} />
+      {rows.map((row, index) => { const item = items.find((candidate) => candidate.id === row.itemId) ?? items[0]; const bundles = Number(row.bundleCount) || 0; const pieces = item ? computeTotalPieces(bundles, item.piecesPerBundle) : 0; return <div className="movement-line" key={row.key}>
+        <div className="section-subheading"><h3>الصنف {formatNumber(index + 1)}</h3>{rows.length > 1 && <Button type="button" variant="ghost" size="icon" aria-label="حذف الصنف من الحركة" onClick={() => setRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}><Trash2 aria-hidden="true" /></Button>}</div>
+        <Field label="الصنف"><select name="itemId" className="stock-select" value={item?.id ?? ""} onChange={(event) => updateRow(index, { itemId: event.target.value })}>{items.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></Field>
+        {item && <div className="available-balance"><span>الرصيد المتاح</span><strong>{formatNumber(getItemBalance(item.id, movements))} حبة</strong></div>}
+        <Field label="عدد البنادل"><Input name="bundleCount" type="number" min="1" step="1" required value={row.bundleCount} onChange={(event) => updateRow(index, { bundleCount: event.target.value })} placeholder="أدخل عدد البنادل" /></Field>
+        {item && <CalculationPreview pieces={pieces} bundles={bundles} piecesPerBundle={item.piecesPerBundle} piecesPerTon={computePiecesPerTon(item.pieceWeightKg)} tons={computeTotalTons(pieces, item.pieceWeightKg)} />}
+      </div>; })}
+      <Button type="button" variant="outline" onClick={() => setRows((current) => [...current, { key: crypto.randomUUID(), itemId: "", bundleCount: "" }])}><Plus aria-hidden="true" /> إضافة صنف</Button>
+      <Field label="العميل (اختياري)"><Input name="customer" maxLength={160} placeholder="اسم العميل" /></Field>
+      <Field label="ملاحظة (اختياري)"><Input name="note" maxLength={250} placeholder="تفاصيل الحركة" /></Field>
       <Button type="submit" className="form-submit">{isInbound ? <ArrowDownToLine aria-hidden="true" /> : <ArrowUpFromLine aria-hidden="true" />}{isInbound ? "حفظ الوارد" : "حفظ الصادر وإصدار الفاتورة"}</Button>
     </form>}
   </section>;
 }
 
-function OutboundScreen({ items, movements, selectedInvoice, onSubmit, onSelectInvoice }: { items: StockItem[]; movements: StockMovement[]; selectedInvoice: StockMovement | null; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onSelectInvoice: (invoice: StockMovement) => void }) {
-  const recentInvoices = movements.filter((movement) => movement.invoiceNumber).slice().reverse();
+function OutboundScreen({ items, movements, selectedInvoice, busyAction, onExportPdf, onSubmit, onSelectInvoice }: { items: StockItem[]; movements: StockMovement[]; selectedInvoice: StockMovement | null; busyAction: "pdf" | "backup" | "csv" | null; onExportPdf: (invoiceNumber: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onSelectInvoice: (invoice: StockMovement) => void }) {
+  const invoicesByNumber = new Map<string, StockMovement>();
+  movements.filter((movement) => movement.kind === "out" && movement.invoiceNumber).forEach((movement) => invoicesByNumber.set(movement.invoiceNumber!, movement));
+  const recentInvoices = [...invoicesByNumber.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const activeInvoice = selectedInvoice ?? recentInvoices[0] ?? null;
-  return <div className="outbound-layout"><MovementScreen key={movements.length} kind="out" items={items} movements={movements} onSubmit={onSubmit} /><section className="content-section invoice-section"><div className="section-subheading"><h3>فاتورة الصادر</h3><FileText aria-hidden="true" /></div>{activeInvoice ? <InvoicePreview invoice={activeInvoice} item={items.find((entry) => entry.id === activeInvoice.itemId)} /> : <EmptyState text="ستظهر الفاتورة هنا بعد تسجيل حركة صادر." />}{recentInvoices.length > 1 && <div className="invoice-history"><h3>الفواتير السابقة</h3>{recentInvoices.slice(0, 8).map((invoice) => <Button key={invoice.id} variant={activeInvoice?.id === invoice.id ? "secondary" : "ghost"} className="invoice-history-row" onClick={() => onSelectInvoice(invoice)}><span>{invoice.invoiceNumber}</span><span>{formatDate(invoice.createdAt)}</span></Button>)}</div>}</section></div>;
+  return <div className="outbound-layout"><MovementScreen key={movements.length} kind="out" items={items} movements={movements} onSubmit={onSubmit} /><section className="content-section invoice-section"><div className="section-subheading"><h3>فاتورة الصادر</h3><FileText aria-hidden="true" /></div>{activeInvoice ? <InvoicePreview invoice={activeInvoice} movements={movements.filter((entry) => entry.kind === "out" && entry.invoiceNumber === activeInvoice.invoiceNumber)} items={items} onExportPdf={onExportPdf} busyAction={busyAction} /> : <EmptyState text="ستظهر الفاتورة هنا بعد تسجيل حركة صادر." />}{recentInvoices.length > 1 && <div className="invoice-history"><h3>الفواتير السابقة</h3>{recentInvoices.slice(0, 8).map((invoice) => <Button key={invoice.id} variant={activeInvoice?.id === invoice.id ? "secondary" : "ghost"} className="invoice-history-row" onClick={() => onSelectInvoice(invoice)}><span>{invoice.invoiceNumber}</span><span>{formatDate(invoice.createdAt)}</span></Button>)}</div>}</section></div>;
 }
 
-function InvoicePreview({ invoice, item }: { invoice: StockMovement; item: StockItem | undefined }) {
-  return <article className="invoice-paper" aria-label={`فاتورة رقم ${invoice.invoiceNumber}`}><div className="invoice-brand"><img src={brandLogo.url} alt="شعار هايل سمر للتجارة" /><div><strong>هايل سمر للتجارة</strong><span>فرع الحديدة · إدارة المخازن</span></div></div><div className="invoice-rule" /><div className="invoice-title-line"><h4>فاتورة صادر</h4><span>{invoice.invoiceNumber}</span></div><p className="invoice-date">التاريخ: {formatDate(invoice.createdAt)}</p><dl className="invoice-details"><InvoiceValue label="الصنف" value={item?.name ?? "صنف محفوظ"} /><InvoiceValue label="عدد البنادل" value={formatNumber(invoice.bundleCount)} /><InvoiceValue label="عدد الحبات" value={formatNumber(invoice.totalPieces)} /><InvoiceValue label="وزن الحبة" value={`${formatNumber(invoice.pieceWeightKg)} كجم`} /><InvoiceValue label="إجمالي الوزن" value={`${formatNumber(invoice.totalTons)} طن`} />{invoice.note && <InvoiceValue label="ملاحظة" value={invoice.note} />}</dl><div className="invoice-rule" /><p className="invoice-signature">استلمت الأصناف الموضحة أعلاه</p><div className="invoice-sign-lines"><span>المستلم</span><span>المسؤول</span></div><Button className="print-button no-print" onClick={() => window.print()}><Printer aria-hidden="true" /> طباعة الفاتورة</Button></article>;
+function InvoicePreview({ invoice, movements, items, onExportPdf, busyAction }: { invoice: StockMovement; movements: StockMovement[]; items: StockItem[]; onExportPdf: (invoiceNumber: string) => void; busyAction: "pdf" | "backup" | "csv" | null }) {
+  const invoiceMovements = movements.length ? movements : [invoice];
+  const invoiceTotals = invoiceMovements.map((entry) => ({ movement: entry, ...getMovementQuantities(entry) }));
+  return <article className="invoice-paper" aria-label={`فاتورة رقم ${invoice.invoiceNumber}`}>
+    <div className="invoice-brand"><img src={brandLogo.url} alt="شعار هايل سمر للتجارة" /><div><strong>هايل سمر للتجارة</strong><span>فرع الحديدة · إدارة المخازن</span></div></div>
+    <div className="invoice-rule" /><div className="invoice-title-line"><h4>فاتورة صادر</h4><span>{invoice.invoiceNumber}</span></div><p className="invoice-date">التاريخ: {formatDate(invoice.createdAt)}</p>
+    <div className="invoice-lines"><div className="invoice-line invoice-line-head"><span>الصنف</span><span>البنادل</span><span>الحبات</span><span>الوزن (طن)</span></div>
+      {invoiceTotals.map(({ movement: entry, totalPieces, totalTons }) => <div className="invoice-line" key={entry.id}><span>{items.find((item) => item.id === entry.itemId)?.name ?? "صنف محفوظ"}</span><span>{formatNumber(entry.bundleCount)}</span><span>{formatNumber(totalPieces)}</span><span>{formatNumber(totalTons)}</span></div>)}
+    </div>
+    <dl className="invoice-details"><InvoiceValue label="إجمالي الحبات" value={formatNumber(invoiceTotals.reduce((sum, entry) => sum + entry.totalPieces, 0))} /><InvoiceValue label="إجمالي الوزن" value={`${formatNumber(invoiceTotals.reduce((sum, entry) => sum + entry.totalTons, 0))} طن`} />{invoice.customer && <InvoiceValue label="العميل" value={invoice.customer} />}{invoice.note && <InvoiceValue label="ملاحظة" value={invoice.note} />}</dl>
+    <div className="invoice-rule" /><p className="invoice-signature">استلمت الأصناف الموضحة أعلاه</p><div className="invoice-sign-lines"><span>المستلم</span><span>المسؤول</span></div><Button type="button" className="print-button no-print" disabled={busyAction === "pdf"} aria-busy={busyAction === "pdf"} onClick={() => onExportPdf(invoice.invoiceNumber ?? "بدون-رقم")}><Printer aria-hidden="true" />{busyAction === "pdf" ? "جاري التجهيز..." : "طباعة الفاتورة"}</Button>
+  </article>;
 }
 
 function InvoiceValue({ label, value }: { label: string; value: string }) {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
 }
 
-function ReportScreen({ items, movements, onExportCsv, onBackup, onRestore }: { items: StockItem[]; movements: StockMovement[]; onExportCsv: () => void; onBackup: () => void; onRestore: () => void }) {
+function ReportScreen({ items, movements, onSelectItem, onExportCsv, onBackup, onRestore, busyAction }: { items: StockItem[]; movements: StockMovement[]; onSelectItem: (item: StockItem) => void; onExportCsv: () => void; onBackup: () => void; onRestore: () => void; busyAction: "pdf" | "backup" | "csv" | null }) {
   return <section className="content-section"><SectionHeading icon={FileBarChart} title="كشف المخزون" subtitle="ملخص الوارد والصادر والأرصدة المتاحة." />
-    {items.length === 0 ? <EmptyState text="لا توجد حركات أو أصناف لعرضها." /> : <div className="table-scroll"><table><thead><tr><th>الصنف</th><th>الوارد</th><th>الصادر</th><th>الرصيد</th><th>الرصيد (طن)</th></tr></thead><tbody>{items.map((item) => { const entries = movements.filter((movement) => movement.itemId === item.id); const incoming = entries.filter((movement) => movement.kind === "in"); const outgoing = entries.filter((movement) => movement.kind === "out"); const balance = getItemBalance(item.id, movements); return <tr key={item.id}><th scope="row">{item.name}</th><td>{formatNumber(incoming.reduce((sum, movement) => sum + movement.totalPieces, 0))}</td><td>{formatNumber(outgoing.reduce((sum, movement) => sum + movement.totalPieces, 0))}</td><td className="table-balance">{formatNumber(balance)}</td><td>{formatNumber(computeTotalTons(balance, item.pieceWeightKg))}</td></tr>; })}</tbody></table></div>}
-    <div className="report-tools no-print"><Button variant="secondary" onClick={onExportCsv}><FileBarChart aria-hidden="true" /> تصدير كشف CSV</Button><Button variant="outline" onClick={onBackup}><Archive aria-hidden="true" /> نسخة احتياطية</Button><Button variant="outline" onClick={onRestore}><ArrowLeftRight aria-hidden="true" /> استعادة نسخة</Button></div>
+    {items.length === 0 ? <EmptyState text="لا توجد حركات أو أصناف لعرضها." /> : <div className="table-scroll"><table><thead><tr><th>الصنف</th><th>الوارد</th><th>الصادر</th><th>الرصيد</th><th>الرصيد (طن)</th></tr></thead><tbody>{items.map((item) => { const entries = movements.filter((movement) => movement.itemId === item.id); const incoming = entries.filter((movement) => movement.kind === "in"); const outgoing = entries.filter((movement) => movement.kind === "out"); const balance = getItemBalance(item.id, movements); return <tr key={item.id} className="report-item-row" tabIndex={0} role="button" aria-label={`تفاصيل الصنف ${item.name}`} onClick={() => onSelectItem(item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectItem(item); } }}><th scope="row">{item.name}</th><td>{formatNumber(incoming.reduce((sum, movement) => sum + movement.totalPieces, 0))}</td><td>{formatNumber(outgoing.reduce((sum, movement) => sum + movement.totalPieces, 0))}</td><td className="table-balance">{formatNumber(balance)}</td><td>{formatNumber(computeTotalTons(balance, item.pieceWeightKg))}</td></tr>; })}</tbody></table></div>}
+    <div className="report-tools no-print"><Button type="button" variant="secondary" disabled={busyAction !== null} aria-busy={busyAction === "csv"} onClick={onExportCsv}><FileBarChart aria-hidden="true" />{busyAction === "csv" ? "جاري التجهيز..." : "تصدير كشف CSV"}</Button><Button type="button" variant="outline" disabled={busyAction !== null} aria-busy={busyAction === "backup"} onClick={onBackup}><Archive aria-hidden="true" />{busyAction === "backup" ? "جاري التجهيز..." : "نسخة احتياطية"}</Button><Button type="button" variant="outline" disabled={busyAction !== null} onClick={onRestore}><ArrowLeftRight aria-hidden="true" /> استعادة النسخة الاحتياطية</Button></div>
     <div className="section-divider" /><div className="section-subheading"><h3>آخر الحركات</h3><ArrowLeftRight aria-hidden="true" /></div>
     {movements.length === 0 ? <EmptyState text="لم تُسجل أي حركة حتى الآن." /> : <div className="history-list">{movements.slice().reverse().slice(0, 20).map((movement) => { const item = items.find((entry) => entry.id === movement.itemId); const incoming = movement.kind === "in"; return <div className="history-row" key={movement.id}><span className={incoming ? "movement-icon inbound-icon" : "movement-icon outbound-icon"}>{incoming ? <ArrowDownToLine aria-hidden="true" /> : <ArrowUpFromLine aria-hidden="true" />}</span><div className="history-description"><strong>{item?.name ?? "صنف محفوظ"}</strong><span>{incoming ? "وارد" : "صادر"} · {formatNumber(movement.bundleCount)} بندل · {formatDate(movement.createdAt)}</span></div><strong className={incoming ? "movement-quantity positive" : "movement-quantity"}>{incoming ? "+" : "−"}{formatNumber(movement.totalPieces)}</strong></div>; })}</div>}
   </section>;
+}
+
+function ItemDetailsDialog({ item, movements, onClose, onSave, onDelete }: { item: StockItem; movements: StockMovement[]; onClose: () => void; onSave: (item: StockItem) => void; onDelete: () => void }) {
+  const [name, setName] = useState(item.name); const [piecesPerBundle, setPiecesPerBundle] = useState(String(item.piecesPerBundle)); const [pieceWeightKg, setPieceWeightKg] = useState(String(item.pieceWeightKg)); const [country, setCountry] = useState<CountryOfOrigin>(item.countryOfOrigin ?? "اليمن");
+  const balance = getItemBalance(item.id, movements);
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-details-dialog" role="dialog" aria-modal="true" aria-labelledby="item-details-title"><div className="section-subheading"><h2 id="item-details-title">تفاصيل الصنف</h2><Button type="button" variant="ghost" onClick={onClose}>إغلاق</Button></div><p>الرصيد الحالي: <strong>{formatNumber(balance)} حبة · {formatNumber(computeTotalTons(balance, Number(pieceWeightKg)))} طن</strong></p><form className="stock-form" onSubmit={(event) => { event.preventDefault(); if (!name.trim() || Number(piecesPerBundle) <= 0 || Number(pieceWeightKg) <= 0) return; onSave({ ...item, name: name.trim(), piecesPerBundle: Number(piecesPerBundle), pieceWeightKg: Number(pieceWeightKg), countryOfOrigin: country }); }}><Field label="اسم الصنف"><Input required value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="عدد الحبات في البندل"><Input type="number" min="1" step="1" required value={piecesPerBundle} onChange={(event) => setPiecesPerBundle(event.target.value)} /></Field><Field label="وزن الحبة بالكيلوغرام"><Input type="number" min="0.001" step="any" required value={pieceWeightKg} onChange={(event) => setPieceWeightKg(event.target.value)} /></Field><Field label="بلد الصنع"><select className="stock-select" value={country} onChange={(event) => setCountry(event.target.value as CountryOfOrigin)}><option value="اليمن">اليمن</option><option value="السعودية">السعودية</option><option value="الصين">الصين</option></select></Field><div className="dialog-actions"><Button type="submit">حفظ التعديلات</Button><Button type="button" variant="destructive" onClick={onDelete}><Trash2 aria-hidden="true" /> حذف الصنف</Button></div></form></section></div>;
 }
 
 function SearchScreen({ searchTerm, onSearch, items, movements }: { searchTerm: string; onSearch: (value: string) => void; items: StockItem[]; movements: StockMovement[] }) {
