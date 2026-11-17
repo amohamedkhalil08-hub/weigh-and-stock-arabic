@@ -51,11 +51,11 @@ export function normalizeStockItem(value: unknown, fallbackId: string): StockIte
   const record = recordOf(value);
   return {
     ...record,
-    id: typeof record.id === "string" && record.id ? record.id : fallbackId,
-    name: typeof record.name === "string" ? record.name : "",
-    piecesPerBundle: numberOrZero(record.piecesPerBundle),
-    pieceWeightKg: numberOrZero(record.pieceWeightKg),
-    createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date(0).toISOString(),
+    id: typeof record["id"] === "string" && record["id"] ? record["id"] : fallbackId,
+    name: typeof record["name"] === "string" ? record["name"] : "",
+    piecesPerBundle: numberOrZero(record["piecesPerBundle"]),
+    pieceWeightKg: numberOrZero(record["pieceWeightKg"]),
+    createdAt: typeof record["createdAt"] === "string" ? record["createdAt"] : new Date(0).toISOString(),
   } as StockItem;
 }
 
@@ -63,17 +63,17 @@ export function normalizeStockMovement(value: unknown, fallbackId: string): Stoc
   const record = recordOf(value);
   return {
     ...record,
-    id: typeof record.id === "string" && record.id ? record.id : fallbackId,
-    itemId: typeof record.itemId === "string" ? record.itemId : "",
-    kind: record.kind === "out" ? "out" : "in",
-    bundleCount: numberOrZero(record.bundleCount),
-    piecesPerBundle: numberOrZero(record.piecesPerBundle),
-    totalPieces: numberOrZero(record.totalPieces),
-    pieceWeightKg: numberOrZero(record.pieceWeightKg),
-    piecesPerTon: numberOrZero(record.piecesPerTon),
-    totalTons: numberOrZero(record.totalTons),
-    note: typeof record.note === "string" ? record.note : "",
-    createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date(0).toISOString(),
+    id: typeof record["id"] === "string" && record["id"] ? record["id"] : fallbackId,
+    itemId: typeof record["itemId"] === "string" ? record["itemId"] : "",
+    kind: record["kind"] === "out" ? "out" : "in",
+    bundleCount: numberOrZero(record["bundleCount"]),
+    piecesPerBundle: numberOrZero(record["piecesPerBundle"]),
+    totalPieces: numberOrZero(record["totalPieces"]),
+    pieceWeightKg: numberOrZero(record["pieceWeightKg"]),
+    piecesPerTon: numberOrZero(record["piecesPerTon"]),
+    totalTons: numberOrZero(record["totalTons"]),
+    note: typeof record["note"] === "string" ? record["note"] : "",
+    createdAt: typeof record["createdAt"] === "string" ? record["createdAt"] : new Date(0).toISOString(),
   } as StockMovement;
 }
 

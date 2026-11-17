@@ -26,7 +26,8 @@ function migrationBackup(items: unknown[], movements: unknown[]): StockBackup {
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
+      const oldVersion = (event as IDBVersionChangeEvent).oldVersion;
       const database = request.result;
       if (!database.objectStoreNames.contains(ITEMS_STORE)) {
         database.createObjectStore(ITEMS_STORE, { keyPath: "id" });
@@ -39,7 +40,7 @@ function openDatabase(): Promise<IDBDatabase> {
         database.createObjectStore(BACKUPS_STORE, { keyPath: "id" });
       }
 
-      if (request.oldVersion > 0 && request.oldVersion < DATABASE_VERSION) {
+      if (oldVersion > 0 && oldVersion < DATABASE_VERSION) {
         const transaction = request.transaction;
         if (transaction) {
           const items = transaction.objectStore(ITEMS_STORE);
@@ -73,7 +74,7 @@ function openDatabase(): Promise<IDBDatabase> {
           };
           normalizeStore(items, normalizeStockItem);
           normalizeStore(movements, normalizeStockMovement);
-          if (request.oldVersion < 2 && !database.objectStoreNames.contains("itemId")) {
+          if (oldVersion < 2) {
             const movementStore = transaction.objectStore(MOVEMENTS_STORE);
             if (!movementStore.indexNames.contains("itemId")) {
               movementStore.createIndex("itemId", "itemId", { unique: false });
