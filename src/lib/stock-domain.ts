@@ -31,6 +31,52 @@ export type StockSnapshot = {
   movements: StockMovement[];
 };
 
+export type StockBackup = {
+  id: string;
+  createdAt: string;
+  reason: string;
+  snapshot: StockSnapshot;
+};
+
+function recordOf(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function numberOrZero(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+export function normalizeStockItem(value: unknown, fallbackId: string): StockItem {
+  const record = recordOf(value);
+  return {
+    ...record,
+    id: typeof record.id === "string" && record.id ? record.id : fallbackId,
+    name: typeof record.name === "string" ? record.name : "",
+    piecesPerBundle: numberOrZero(record.piecesPerBundle),
+    pieceWeightKg: numberOrZero(record.pieceWeightKg),
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date(0).toISOString(),
+  } as StockItem;
+}
+
+export function normalizeStockMovement(value: unknown, fallbackId: string): StockMovement {
+  const record = recordOf(value);
+  return {
+    ...record,
+    id: typeof record.id === "string" && record.id ? record.id : fallbackId,
+    itemId: typeof record.itemId === "string" ? record.itemId : "",
+    kind: record.kind === "out" ? "out" : "in",
+    bundleCount: numberOrZero(record.bundleCount),
+    piecesPerBundle: numberOrZero(record.piecesPerBundle),
+    totalPieces: numberOrZero(record.totalPieces),
+    pieceWeightKg: numberOrZero(record.pieceWeightKg),
+    piecesPerTon: numberOrZero(record.piecesPerTon),
+    totalTons: numberOrZero(record.totalTons),
+    note: typeof record.note === "string" ? record.note : "",
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date(0).toISOString(),
+  } as StockMovement;
+}
+
 export function computeTotalPieces(bundleCount: number, piecesPerBundle: number) {
   return bundleCount * piecesPerBundle;
 }
