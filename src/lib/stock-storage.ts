@@ -148,6 +148,58 @@ export async function deleteStockMovementWithBackup(movementId: string) {
   }
 }
 
+export async function replaceInvoiceMovements(invoiceNumber: string, newMovements: StockMovement[]) {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction([ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE], "readwrite");
+    const itemsStore = transaction.objectStore(ITEMS_STORE);
+    const movementsStore = transaction.objectStore(MOVEMENTS_STORE);
+    const [items, movements] = await Promise.all([
+      requestResult<StockItem[]>(itemsStore.getAll()),
+      requestResult<StockMovement[]>(movementsStore.getAll()),
+    ]);
+    transaction.objectStore(BACKUPS_STORE).put({
+      id: `before-replace-invoice-${crypto.randomUUID()}`,
+      createdAt: new Date().toISOString(),
+      reason: `نسخة تلقائية قبل تعديل الفاتورة ${invoiceNumber}`,
+      snapshot: { items, movements },
+    } satisfies StockBackup);
+    movements.filter((movement) => movement.invoiceNumber === invoiceNumber)
+      .forEach((movement) => movementsStore.delete(movement.id));
+    newMovements.forEach((movement) => movementsStore.put({ ...movement, invoiceNumber }));
+    await waitForTransaction(transaction);
+  } finally {
+    database.close();
+  }
+}
+
+export async function deleteInvoiceWithBackup(invoiceNumber: string) {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction([ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE], "readwrite");
+    const itemsStore = transaction.objectStore(ITEMS_STORE);
+    const movementsStore = transaction.objectStore(MOVEMENTS_STORE);
+    const [items, movements] = await Promise.all([
+      requestResult<StockItem[]>(itemsStore.getAll()),
+      requestResult<StockMovement[]>(movementsStore.getAll()),
+    ]);
+    transaction.objectStore(BACKUPS_STORE).put({
+      id: `before-delete-invoice-${crypto.randomUUID()}`,
+      createdAt: new Date().toISOString(),
+      reason: `نسخة تلقائية قبل حذف الفاتورة ${invoiceNumber}`,
+      snapshot: { items, movements },
+    } satisfies StockBackup);
+    movements.filter((movement) => movement.invoiceNumber === invoiceNumber)
+      .forEach((movement) => movementsStore.delete(movement.id));
+    await waitForTransaction(transaction);
+  } finally {
+    database.close();
+  }
+}
+
+export const replaceInvoiceMovementsWithBackup = replaceInvoiceMovements;
+export const deleteInvoiceMovementsWithBackup = deleteInvoiceWithBackup;
+
 export async function saveStockItem(item: StockItem) {
   const database = await openDatabase();
   try { const transaction = database.transaction(ITEMS_STORE, "readwrite"); transaction.objectStore(ITEMS_STORE).put(item); await waitForTransaction(transaction); }

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Archive, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, Boxes, FileBarChart, FileText, Home, PackagePlus, Plus, Printer, Search, ShieldCheck, Trash2, Weight, type LucideIcon } from "lucide-react";
+import { Archive, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, Boxes, Coins, FileBarChart, FileText, Home, PackagePlus, Pencil, Plus, Printer, Search, ShieldCheck, Trash2, UserRound, Weight, NotebookText, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,7 @@ import { buildBackupFile, buildMovementCsv, downloadBlob, getMovementQuantities,
 import { downloadInvoicePdf } from "@/lib/invoice-pdf";
 import { Input } from "@/components/ui/input";
 import { computePiecesPerTon, computeTotalPieces, computeTotalTons, createOpeningStockMovement, getItemBalance, type CountryOfOrigin, type MovementKind, type StockItem, type StockMovement, type StockSnapshot } from "@/lib/stock-domain";
-import { deleteStockItemWithBackup, readStockSnapshot, restoreStockSnapshot, saveStockItem, saveStockItemWithOpeningMovement, saveStockMovements } from "@/lib/stock-storage";
+import { deleteStockItemWithBackup, readStockSnapshot, restoreStockSnapshot, saveStockItem, saveStockItemWithOpeningMovement, saveStockMovements, deleteInvoiceMovementsWithBackup, replaceInvoiceMovementsWithBackup } from "@/lib/stock-storage";
 import { registerOfflineSupport } from "@/lib/offline-registration";
 import brandLogo from "@/assets/hail-samar-brand.jpg.asset.json";
 
@@ -43,6 +43,7 @@ export function StockApp() {
   const [snapshot, setSnapshot] = useState<StockSnapshot>({ items: [], movements: [] });
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedInvoice, setSelectedInvoice] = useState<StockMovement | null>(null);
+  const [editingInvoice, setEditingInvoice] = useState<StockMovement | null>(null);
   const [selectedReportItem, setSelectedReportItem] = useState<StockItem | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -73,13 +74,14 @@ export function StockApp() {
     const piecesPerBundle = Number(form.get("piecesPerBundle"));
     const pieceWeightKg = Number(form.get("pieceWeightKg"));
     const countryValue = String(form.get("countryOfOrigin") ?? "");
+    const size = String(form.get("size") ?? "").trim(); const barcode = String(form.get("barcode") ?? "").trim(); const itemNote = String(form.get("itemNote") ?? "").trim();
     if (!name || !Number.isFinite(bundleCount) || bundleCount <= 0 || !Number.isFinite(piecesPerBundle) || piecesPerBundle <= 0 || !Number.isFinite(pieceWeightKg) || pieceWeightKg <= 0 || !["اليمن", "السعودية", "الصين"].includes(countryValue)) {
       showError("أدخل بيانات الصنف وعدد البنادل والحبات ووزن الحبة واختر بلد الصنع.");
       return;
     }
     try {
       const createdAt = new Date().toISOString();
-      const item: StockItem = { id: crypto.randomUUID(), name, piecesPerBundle, pieceWeightKg, countryOfOrigin: countryValue as CountryOfOrigin, createdAt };
+      const item: StockItem = { id: crypto.randomUUID(), name, size, barcode, note: itemNote, piecesPerBundle, pieceWeightKg, countryOfOrigin: countryValue as CountryOfOrigin, createdAt };
       const openingMovement = createOpeningStockMovement(item, bundleCount, crypto.randomUUID(), createdAt);
       await saveStockItemWithOpeningMovement(item, openingMovement);
       await refresh();
@@ -127,9 +129,35 @@ export function StockApp() {
   }
 
   async function handleDeleteItem(item: StockItem) {
-    if (!window.confirm(`هل أنت متأكد من حذف الصنف «${item.name}» وجميع حركاته؟ سيتم حفظ نسخة احتياطية تلقائية قبل الحذف.`)) return;
-    try { await deleteStockItemWithBackup(item.id); await refresh(); setSelectedReportItem(null); showNotice("تم حذف الصنف وحركاته بعد التأكيد."); }
-    catch { showError("تعذر حذف الصنف."); }
+    if (!window.confirm(`هل تريد حذف الصنف «${item.name}»؟`)) return;
+    try {
+      const hasInvoiceHistory = snapshot.movements.some((movement) => movement.itemId === item.id && movement.kind === "out" && movement.invoiceNumber);
+      if (hasInvoiceHistory) {
+        await saveStockItem({ ...item, archived: true });
+        showNotice("الصنف موجود في فواتير سابقة؛ تم إخفاؤه مع الإبقاء على سجل الفواتير.");
+      } else {
+        await deleteStockItemWithBackup(item.id);
+        showNotice("تم حذف الصنف بعد التأكيد.");
+      }
+      await refresh(); setSelectedReportItem(null);
+    } catch { showError("تعذر حذف الصنف."); }
+  }
+
+  async function handleSaveInvoice(invoiceNumber: string, updatedMovements: StockMovement[]) {
+    const oldRows = snapshot.movements.filter((row) => row.invoiceNumber === invoiceNumber);
+    for (const next of updatedMovements) {
+      const old = oldRows.find((row) => row.id === next.id);
+      const availableAfterRestore = getItemBalance(next.itemId, snapshot.movements) + (old?.totalPieces ?? 0);
+      if (next.totalPieces > availableAfterRestore) { showError(`الكمية الجديدة تتجاوز الرصيد المتاح للصنف ${snapshot.items.find((item) => item.id === next.itemId)?.name ?? ""}.`); return; }
+    }
+    try { await replaceInvoiceMovementsWithBackup(invoiceNumber, updatedMovements); await refresh(); setSelectedInvoice(updatedMovements[0] ?? null); setEditingInvoice(null); showNotice("تم تعديل الفاتورة مع ضبط رصيد المخزون على الكمية الجديدة."); }
+    catch (caught) { showError(caught instanceof Error ? caught.message : "تعذر تعديل الفاتورة."); }
+  }
+
+  async function handleDeleteInvoice(invoiceNumber: string) {
+    if (!window.confirm(`هل أنت متأكد من حذف الفاتورة ${invoiceNumber}؟ ستُعاد كمياتها إلى رصيد المخزون.`)) return;
+    try { await deleteInvoiceMovementsWithBackup(invoiceNumber); await refresh(); setSelectedInvoice(null); showNotice("تم حذف الفاتورة وإرجاع الكميات إلى الرصيد."); }
+    catch { showError("تعذر حذف الفاتورة."); }
   }
 
   async function runExport(action: "pdf" | "backup" | "csv", prepare: () => Promise<void>, successMessage: string) {
@@ -208,13 +236,14 @@ export function StockApp() {
         {(notice || error) && <div className={error ? "app-message error-message" : "app-message"} role="status" aria-live="polite">{error || notice}</div>}
         {loading ? <section className="content-section"><p>جارٍ فتح المخزون المحفوظ…</p></section> : <>
           {screen === "home" && <HomeScreen itemCount={snapshot.items.length} totalPieces={totalPieces} onNavigate={setScreen} />}
-          {screen === "items" && <ItemsScreen key={snapshot.items.length} items={snapshot.items} movements={snapshot.movements} onSubmit={handleAddItem} />}
+          {screen === "items" && <ItemsScreen key={snapshot.items.length} items={snapshot.items.filter((item) => !item.archived)} movements={snapshot.movements} onSubmit={handleAddItem} onEdit={setSelectedReportItem} onDelete={(item) => void handleDeleteItem(item)} />}
           {screen === "balances" && <BalancesScreen items={snapshot.items} movements={snapshot.movements} />}
           {screen === "inbound" && <MovementScreen key={snapshot.movements.length} kind="in" items={snapshot.items} movements={snapshot.movements} onSubmit={(event) => void handleAddMovement("in", event)} />}
-          {screen === "outbound" && <OutboundScreen items={snapshot.items} movements={snapshot.movements} selectedInvoice={selectedInvoice} busyAction={busyAction} onExportPdf={exportInvoice} onSubmit={(event) => void handleAddMovement("out", event)} onSelectInvoice={setSelectedInvoice} />}
+          {screen === "outbound" && <OutboundScreen items={snapshot.items} movements={snapshot.movements} selectedInvoice={selectedInvoice} busyAction={busyAction} onExportPdf={exportInvoice} onSubmit={(event) => void handleAddMovement("out", event)} onSelectInvoice={setSelectedInvoice} onEditInvoice={setEditingInvoice} onDeleteInvoice={handleDeleteInvoice} />}
           {screen === "report" && <ReportScreen items={snapshot.items} movements={snapshot.movements} onSelectItem={setSelectedReportItem} onExportCsv={exportCsv} onBackup={exportBackup} busyAction={busyAction} onRestore={() => restoreInput.current?.click()} />}
           {screen === "search" && <SearchScreen searchTerm={searchTerm} onSearch={setSearchTerm} items={matches} movements={snapshot.movements} />}
         </>}
+        {editingInvoice && <InvoiceEditDialog invoice={editingInvoice} movements={snapshot.movements.filter((entry) => entry.invoiceNumber === editingInvoice.invoiceNumber && entry.kind === "out")} items={snapshot.items} onClose={() => setEditingInvoice(null)} onSave={(rows) => void handleSaveInvoice(editingInvoice.invoiceNumber!, rows)} />}
         {selectedReportItem && <ItemDetailsDialog item={selectedReportItem} movements={snapshot.movements} onClose={() => setSelectedReportItem(null)} onSave={handleUpdateItem} onDelete={() => void handleDeleteItem(selectedReportItem)} />}
         <input ref={restoreInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => void importBackup(event)} aria-label="اختر ملف النسخة الاحتياطية" />
       </main>
@@ -244,7 +273,7 @@ function HomeAction({ icon: Icon, label, onClick }: { icon: LucideIcon; label: s
   return <button className="home-action" onClick={onClick}><Icon aria-hidden="true" /><span>{label}</span><span className="action-arrow" aria-hidden="true">←</span></button>;
 }
 
-function ItemsScreen({ items, movements, onSubmit }: { items: StockItem[]; movements: StockMovement[]; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+function ItemsScreen({ items, movements, onSubmit, onEdit, onDelete }: { items: StockItem[]; movements: StockMovement[]; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onEdit: (item: StockItem) => void; onDelete: (item: StockItem) => void }) {
   const [bundleCountInput, setBundleCountInput] = useState("");
   const [piecesPerBundleInput, setPiecesPerBundleInput] = useState("");
   const [pieceWeightInput, setPieceWeightInput] = useState("");
@@ -258,7 +287,10 @@ function ItemsScreen({ items, movements, onSubmit }: { items: StockItem[]; movem
   return <section className="content-section">
     <SectionHeading icon={PackagePlus} title="إضافة صنف" subtitle="تعريف الصنف ووحدة التعبئة ووزن الحبة." />
     <form className="stock-form" onSubmit={onSubmit}>
-      <Field label="اسم الصنف"><Input name="name" required maxLength={120} placeholder="مثال: أكياس أسمنت" /></Field>
+      <Field label="اسم الصنف"><Input name="name" required maxLength={120} placeholder="مثال: خاوي أسود" /></Field>
+      <Field label="المقاس"><Input name="size" maxLength={80} placeholder="مثال: 50×100×1.2" /></Field>
+      <Field label="الباركود"><Input name="barcode" maxLength={120} placeholder="اختياري" /></Field>
+      <Field label="ملاحظة الصنف"><Input name="itemNote" maxLength={250} placeholder="اختياري" /></Field>
       <div className="form-grid two-columns"><Field label="عدد البنادل"><Input name="bundleCount" type="number" min="1" step="1" required value={bundleCountInput} onChange={(event) => setBundleCountInput(event.target.value)} placeholder="مثال: ١٠" /></Field><Field label="عدد الحبات في البندل"><Input name="piecesPerBundle" type="number" min="1" step="1" required value={piecesPerBundleInput} onChange={(event) => setPiecesPerBundleInput(event.target.value)} placeholder="٥٠" /></Field></div>
       <div className="form-grid two-columns"><Field label="وزن الحبة بالكيلوغرام"><Input name="pieceWeightKg" type="number" min="0.001" step="any" required value={pieceWeightInput} onChange={(event) => setPieceWeightInput(event.target.value)} placeholder="٢٥" /></Field><Field label="بلد الصنع"><select name="countryOfOrigin" className="stock-select" defaultValue="اليمن" required><option value="اليمن">اليمن</option><option value="السعودية">السعودية</option><option value="الصين">الصين</option></select></Field></div>
       <p className="field-hint">تُستخدم بيانات التعبئة والوزن تلقائياً في حركات الصنف.</p>
@@ -266,7 +298,7 @@ function ItemsScreen({ items, movements, onSubmit }: { items: StockItem[]; movem
       <Button type="submit"><PackagePlus aria-hidden="true" /> حفظ الصنف</Button>
     </form>
     <div className="section-divider" /><div className="section-subheading"><h3>الأصناف المسجلة</h3><span>{formatNumber(items.length)} صنف</span></div>
-    {items.length === 0 ? <EmptyState text="لا توجد أصناف مسجلة بعد." /> : <div className="table-scroll"><table><thead><tr><th>الصنف</th><th>بلد الصنع</th><th>حبة / بندل</th><th>وزن الحبة</th><th>الرصيد</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><th scope="row">{item.name}</th><td>{item.countryOfOrigin ?? "—"}</td><td>{formatNumber(item.piecesPerBundle)}</td><td>{formatNumber(item.pieceWeightKg)} كجم</td><td>{formatNumber(getItemBalance(item.id, movements))}</td></tr>)}</tbody></table></div>}
+    {items.length === 0 ? <EmptyState text="لا توجد أصناف مسجلة بعد." /> : <div className="table-scroll"><table><thead><tr><th>الصنف</th><th>بلد الصنع</th><th>حبة / بندل</th><th>وزن الحبة</th><th>الرصيد</th><th>إجراءات</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><th scope="row">{item.name}{item.size && <small className="item-size-cell">{item.size}</small>}</th><td>{item.countryOfOrigin ?? "—"}</td><td>{formatNumber(item.piecesPerBundle)}</td><td>{formatNumber(item.pieceWeightKg)} كجم</td><td>{formatNumber(getItemBalance(item.id, movements))}</td><td className="row-actions"><Button type="button" variant="ghost" size="icon" aria-label={`تعديل ${item.name}`} onClick={() => onEdit(item)}><Pencil /></Button><Button type="button" variant="ghost" size="icon" aria-label={`حذف ${item.name}`} onClick={() => onDelete(item)}><Trash2 /></Button></td></tr>)}</tbody></table></div>}
   </section>;
 }
 
@@ -298,30 +330,37 @@ function MovementScreen({ kind, items, movements, onSubmit }: { kind: MovementKi
   </section>;
 }
 
-function OutboundScreen({ items, movements, selectedInvoice, busyAction, onExportPdf, onSubmit, onSelectInvoice }: { items: StockItem[]; movements: StockMovement[]; selectedInvoice: StockMovement | null; busyAction: "pdf" | "backup" | "csv" | null; onExportPdf: (invoiceNumber: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onSelectInvoice: (invoice: StockMovement) => void }) {
+function OutboundScreen({ items, movements, selectedInvoice, busyAction, onExportPdf, onSubmit, onSelectInvoice, onEditInvoice, onDeleteInvoice }: { items: StockItem[]; movements: StockMovement[]; selectedInvoice: StockMovement | null; busyAction: "pdf" | "backup" | "csv" | null; onExportPdf: (invoiceNumber: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onSelectInvoice: (invoice: StockMovement) => void; onEditInvoice: (invoice: StockMovement) => void; onDeleteInvoice: (invoiceNumber: string) => void }) {
   const invoicesByNumber = new Map<string, StockMovement>();
   movements.filter((movement) => movement.kind === "out" && movement.invoiceNumber).forEach((movement) => invoicesByNumber.set(movement.invoiceNumber!, movement));
   const recentInvoices = [...invoicesByNumber.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const activeInvoice = selectedInvoice ?? recentInvoices[0] ?? null;
-  return <div className="outbound-layout"><MovementScreen key={movements.length} kind="out" items={items} movements={movements} onSubmit={onSubmit} /><section className="content-section invoice-section"><div className="section-subheading"><h3>فاتورة الصادر</h3><FileText aria-hidden="true" /></div>{activeInvoice ? <InvoicePreview invoice={activeInvoice} movements={movements.filter((entry) => entry.kind === "out" && entry.invoiceNumber === activeInvoice.invoiceNumber)} items={items} onExportPdf={onExportPdf} busyAction={busyAction} /> : <EmptyState text="ستظهر الفاتورة هنا بعد تسجيل حركة صادر." />}{recentInvoices.length > 1 && <div className="invoice-history"><h3>الفواتير السابقة</h3>{recentInvoices.slice(0, 8).map((invoice) => <Button key={invoice.id} variant={activeInvoice?.id === invoice.id ? "secondary" : "ghost"} className="invoice-history-row" onClick={() => onSelectInvoice(invoice)}><span>{invoice.invoiceNumber}</span><span>{formatDate(invoice.createdAt)}</span></Button>)}</div>}</section></div>;
+  const invoiceRows = activeInvoice ? movements.filter((entry) => entry.kind === "out" && entry.invoiceNumber === activeInvoice.invoiceNumber) : [];
+  return <div className="outbound-layout"><MovementScreen key={movements.length} kind="out" items={items} movements={movements} onSubmit={onSubmit} /><section className="content-section invoice-section"><div className="section-subheading"><h3>فاتورة الصادر</h3><FileText aria-hidden="true" /></div>{activeInvoice ? <InvoicePreview invoice={activeInvoice} movements={invoiceRows} items={items} onExportPdf={onExportPdf} busyAction={busyAction} onEdit={() => onEditInvoice(activeInvoice)} onDelete={() => onDeleteInvoice(activeInvoice.invoiceNumber!)} /> : <EmptyState text="ستظهر الفاتورة هنا بعد تسجيل حركة صادر." />}{recentInvoices.length > 0 && <div className="invoice-history"><h3>الفواتير السابقة</h3>{recentInvoices.slice(0, 20).map((invoice) => { const rows = movements.filter((entry) => entry.kind === "out" && entry.invoiceNumber === invoice.invoiceNumber); const tons = rows.reduce((sum, entry) => sum + entry.totalTons, 0); return <div key={invoice.invoiceNumber} className="invoice-history-row"><button type="button" className="invoice-history-select" onClick={() => onSelectInvoice(invoice)}><span>{invoice.customer || "بدون اسم عميل"}</span><strong>{formatNumber(tons)} طن</strong><small>{invoice.invoiceNumber}</small></button><Button type="button" variant="ghost" size="icon" aria-label="تعديل الفاتورة" onClick={() => onEditInvoice(invoice)}><Pencil /></Button><Button type="button" variant="ghost" size="icon" aria-label="حذف الفاتورة" onClick={() => onDeleteInvoice(invoice.invoiceNumber!)}><Trash2 /></Button></div>; })}</div>}</section></div>;
 }
 
-function InvoicePreview({ invoice, movements, items, onExportPdf, busyAction }: { invoice: StockMovement; movements: StockMovement[]; items: StockItem[]; onExportPdf: (invoiceNumber: string) => void; busyAction: "pdf" | "backup" | "csv" | null }) {
+function InvoicePreview({ invoice, movements, items, onExportPdf, busyAction, onEdit, onDelete }: { invoice: StockMovement; movements: StockMovement[]; items: StockItem[]; onExportPdf: (invoiceNumber: string) => void; busyAction: "pdf" | "backup" | "csv" | null; onEdit: () => void; onDelete: () => void }) {
   const invoiceMovements = movements.length ? movements : [invoice];
   const invoiceTotals = invoiceMovements.map((entry) => ({ movement: entry, ...getMovementQuantities(entry) }));
+  const totalTons = invoiceTotals.reduce((sum, row) => sum + row.totalTons, 0);
   return <article className="invoice-paper" aria-label={`فاتورة رقم ${invoice.invoiceNumber}`}>
-    <div className="invoice-brand"><img src={brandLogo.url} alt="شعار هايل سمر للتجارة" /><div><strong>هايل سمر للتجارة</strong><span>فرع الحديدة · إدارة المخازن</span></div></div>
-    <div className="invoice-rule" /><div className="invoice-title-line"><h4>فاتورة صادر</h4><span>{invoice.invoiceNumber}</span></div><p className="invoice-date">التاريخ: {formatDate(invoice.createdAt)}</p>
-    <div className="invoice-lines"><div className="invoice-line invoice-line-head"><span>الصنف</span><span>البنادل</span><span>الحبات</span><span>الوزن (طن)</span></div>
-      {invoiceTotals.map(({ movement: entry, totalPieces, totalTons }) => <div className="invoice-line" key={entry.id}><span>{items.find((item) => item.id === entry.itemId)?.name ?? "صنف محفوظ"}</span><span>{formatNumber(entry.bundleCount)}</span><span>{formatNumber(totalPieces)}</span><span>{formatNumber(totalTons)}</span></div>)}
+    <div className="invoice-topline"><span><FileText /></span><strong>فاتورة الصادر</strong></div>
+    <div className="invoice-brand"><img src={brandLogo.url} alt="شعار هايل سمر للتجارة" /><div><strong>هايل سمر للتجارة</strong><span>فرع الحديدة : إدارة المخازن</span></div></div>
+    <div className="invoice-rule" /><div className="invoice-title-line"><h4>فاتورة صادر</h4><span>{invoice.invoiceNumber}</span></div><p className="invoice-date">التاريخ: {formatArabicDate(invoice.createdAt)}</p>
+    <div className="invoice-meta-box"><b><UserRound />اسم العميل:</b><span>{invoice.customer || "—"}</span></div>
+    <div className="invoice-meta-box"><b><NotebookText />ملاحظة:</b><span>{invoice.note || "—"}</span></div>
+    <div className="invoice-lines"><div className="invoice-line invoice-line-head"><span>الصنف</span><span>الوزن (طن)</span><span>عدد البنادل</span><span>عدد الحبات</span></div>
+      {invoiceTotals.map(({ movement: entry, totalPieces, totalTons }) => { const item = items.find((candidate) => candidate.id === entry.itemId); return <div className="invoice-line" key={entry.id}><span className="invoice-product"><strong>{item?.name ?? "صنف محفوظ"}</strong><small>{item?.size ?? ""}</small></span><span>{formatNumber(totalTons)}</span><span>{formatNumber(entry.bundleCount)}</span><span>{formatNumber(totalPieces)}</span></div>; })}
     </div>
-    <dl className="invoice-details"><InvoiceValue label="إجمالي الحبات" value={formatNumber(invoiceTotals.reduce((sum, entry) => sum + entry.totalPieces, 0))} /><InvoiceValue label="إجمالي الوزن" value={`${formatNumber(invoiceTotals.reduce((sum, entry) => sum + entry.totalTons, 0))} طن`} />{invoice.customer && <InvoiceValue label="العميل" value={invoice.customer} />}{invoice.note && <InvoiceValue label="ملاحظة" value={invoice.note} />}</dl>
-    <div className="invoice-rule" /><p className="invoice-signature">استلمت الأصناف الموضحة أعلاه</p><div className="invoice-sign-lines"><span>المستلم</span><span>المسؤول</span></div><Button type="button" className="print-button no-print" disabled={busyAction === "pdf"} aria-busy={busyAction === "pdf"} onClick={() => onExportPdf(invoice.invoiceNumber ?? "بدون-رقم")}><Printer aria-hidden="true" />{busyAction === "pdf" ? "جاري التجهيز..." : "طباعة الفاتورة"}</Button>
+    <div className="invoice-total"><b><Coins />إجمالي الطن</b><strong>{formatNumber(totalTons)} <small>طن</small></strong></div>
+    <div className="invoice-sign-lines"><span>اسم المستلم / <b>__</b></span><span>اسم المسؤول : <b>__</b></span></div><p className="invoice-signature">استلمت الأصناف الموضحة أعلاه</p>
+    <div className="invoice-controls no-print"><Button type="button" variant="outline" onClick={onEdit}><Pencil /> تعديل</Button><Button type="button" variant="destructive" onClick={onDelete}><Trash2 /> حذف</Button><Button type="button" className="print-button" disabled={busyAction === "pdf"} aria-busy={busyAction === "pdf"} onClick={() => onExportPdf(invoice.invoiceNumber ?? "بدون-رقم")}><Printer aria-hidden="true" />{busyAction === "pdf" ? "جاري التجهيز..." : "طباعة الفاتورة"}</Button></div>
   </article>;
 }
 
-function InvoiceValue({ label, value }: { label: string; value: string }) {
-  return <div><dt>{label}</dt><dd>{value}</dd></div>;
+function InvoiceEditDialog({ invoice, movements, items, onClose, onSave }: { invoice: StockMovement; movements: StockMovement[]; items: StockItem[]; onClose: () => void; onSave: (rows: StockMovement[]) => void }) {
+  const [customer, setCustomer] = useState(invoice.customer ?? ""); const [note, setNote] = useState(invoice.note ?? "");
+  return <div className="dialog-backdrop" role="presentation"><section className="item-details-dialog" role="dialog" aria-modal="true" aria-labelledby="invoice-edit-title"><div className="section-subheading"><h2 id="invoice-edit-title">تعديل الفاتورة {invoice.invoiceNumber}</h2><Button type="button" variant="ghost" onClick={onClose}>إغلاق</Button></div><form className="stock-form" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const updated = movements.map((entry) => { const item = items.find((candidate) => candidate.id === entry.itemId); const bundles = Number(form.get(`bundle-${entry.id}`)); const pieces = bundles * entry.piecesPerBundle; return { ...entry, bundleCount: bundles, totalPieces: pieces, totalTons: computeTotalTons(pieces, entry.pieceWeightKg), customer: customer.trim(), note: note.trim() }; }); if (updated.some((row) => !Number.isFinite(row.bundleCount) || row.bundleCount <= 0)) return; onSave(updated); }}><Field label="اسم العميل"><Input value={customer} onChange={(event) => setCustomer(event.target.value)} maxLength={160} /></Field><Field label="ملاحظة"><Input value={note} onChange={(event) => setNote(event.target.value)} maxLength={250} /></Field>{movements.map((entry) => <div className="movement-line" key={entry.id}><strong>{items.find((item) => item.id === entry.itemId)?.name ?? "صنف"}</strong><Field label="عدد البنادل"><Input name={`bundle-${entry.id}`} type="number" min="1" step="1" defaultValue={entry.bundleCount} required /></Field></div>)}<div className="dialog-actions"><Button type="submit">حفظ مع الحفاظ على رقم الفاتورة</Button><Button type="button" variant="outline" onClick={onClose}>إلغاء</Button></div></form></section></div>;
 }
 
 function ReportScreen({ items, movements, onSelectItem, onExportCsv, onBackup, onRestore, busyAction }: { items: StockItem[]; movements: StockMovement[]; onSelectItem: (item: StockItem) => void; onExportCsv: () => void; onBackup: () => void; onRestore: () => void; busyAction: "pdf" | "backup" | "csv" | null }) {
@@ -334,9 +373,9 @@ function ReportScreen({ items, movements, onSelectItem, onExportCsv, onBackup, o
 }
 
 function ItemDetailsDialog({ item, movements, onClose, onSave, onDelete }: { item: StockItem; movements: StockMovement[]; onClose: () => void; onSave: (item: StockItem) => void; onDelete: () => void }) {
-  const [name, setName] = useState(item.name); const [piecesPerBundle, setPiecesPerBundle] = useState(String(item.piecesPerBundle)); const [pieceWeightKg, setPieceWeightKg] = useState(String(item.pieceWeightKg)); const [country, setCountry] = useState<CountryOfOrigin>(item.countryOfOrigin ?? "اليمن");
+  const [name, setName] = useState(item.name); const [piecesPerBundle, setPiecesPerBundle] = useState(String(item.piecesPerBundle)); const [pieceWeightKg, setPieceWeightKg] = useState(String(item.pieceWeightKg)); const [country, setCountry] = useState<CountryOfOrigin>(item.countryOfOrigin ?? "اليمن"); const [size, setSize] = useState(item.size ?? ""); const [barcode, setBarcode] = useState(item.barcode ?? ""); const [itemNote, setItemNote] = useState(item.note ?? "");
   const balance = getItemBalance(item.id, movements);
-  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-details-dialog" role="dialog" aria-modal="true" aria-labelledby="item-details-title"><div className="section-subheading"><h2 id="item-details-title">تفاصيل الصنف</h2><Button type="button" variant="ghost" onClick={onClose}>إغلاق</Button></div><p>الرصيد الحالي: <strong>{formatNumber(balance)} حبة · {formatNumber(computeTotalTons(balance, Number(pieceWeightKg)))} طن</strong></p><form className="stock-form" onSubmit={(event) => { event.preventDefault(); if (!name.trim() || Number(piecesPerBundle) <= 0 || Number(pieceWeightKg) <= 0) return; onSave({ ...item, name: name.trim(), piecesPerBundle: Number(piecesPerBundle), pieceWeightKg: Number(pieceWeightKg), countryOfOrigin: country }); }}><Field label="اسم الصنف"><Input required value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="عدد الحبات في البندل"><Input type="number" min="1" step="1" required value={piecesPerBundle} onChange={(event) => setPiecesPerBundle(event.target.value)} /></Field><Field label="وزن الحبة بالكيلوغرام"><Input type="number" min="0.001" step="any" required value={pieceWeightKg} onChange={(event) => setPieceWeightKg(event.target.value)} /></Field><Field label="بلد الصنع"><select className="stock-select" value={country} onChange={(event) => setCountry(event.target.value as CountryOfOrigin)}><option value="اليمن">اليمن</option><option value="السعودية">السعودية</option><option value="الصين">الصين</option></select></Field><div className="dialog-actions"><Button type="submit">حفظ التعديلات</Button><Button type="button" variant="destructive" onClick={onDelete}><Trash2 aria-hidden="true" /> حذف الصنف</Button></div></form></section></div>;
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="item-details-dialog" role="dialog" aria-modal="true" aria-labelledby="item-details-title"><div className="section-subheading"><h2 id="item-details-title">تفاصيل الصنف</h2><Button type="button" variant="ghost" onClick={onClose}>إغلاق</Button></div><p>الرصيد الحالي: <strong>{formatNumber(balance)} حبة · {formatNumber(computeTotalTons(balance, Number(pieceWeightKg)))} طن</strong></p><form className="stock-form" onSubmit={(event) => { event.preventDefault(); if (!name.trim() || Number(piecesPerBundle) <= 0 || Number(pieceWeightKg) <= 0) return; onSave({ ...item, name: name.trim(), size, barcode, note: itemNote, piecesPerBundle: Number(piecesPerBundle), pieceWeightKg: Number(pieceWeightKg), countryOfOrigin: country }); }}><Field label="اسم الصنف"><Input required value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="عدد الحبات في البندل"><Input type="number" min="1" step="1" required value={piecesPerBundle} onChange={(event) => setPiecesPerBundle(event.target.value)} /></Field><Field label="وزن الحبة بالكيلوغرام"><Input type="number" min="0.001" step="any" required value={pieceWeightKg} onChange={(event) => setPieceWeightKg(event.target.value)} /></Field><Field label="المقاس"><Input value={size} onChange={(event) => setSize(event.target.value)} /></Field><Field label="الباركود"><Input value={barcode} onChange={(event) => setBarcode(event.target.value)} /></Field><Field label="ملاحظة الصنف"><Input value={itemNote} onChange={(event) => setItemNote(event.target.value)} /></Field><Field label="بلد الصنع"><select className="stock-select" value={country} onChange={(event) => setCountry(event.target.value as CountryOfOrigin)}><option value="اليمن">اليمن</option><option value="السعودية">السعودية</option><option value="الصين">الصين</option></select></Field><div className="dialog-actions"><Button type="submit">حفظ التعديلات</Button><Button type="button" variant="destructive" onClick={onDelete}><Trash2 aria-hidden="true" /> حذف الصنف</Button></div></form></section></div>;
 }
 
 function SearchScreen({ searchTerm, onSearch, items, movements }: { searchTerm: string; onSearch: (value: string) => void; items: StockItem[]; movements: StockMovement[] }) {
@@ -364,3 +403,4 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function EmptyState({ text }: { text: string }) { return <p className="empty-state">{text}</p>; }
 function formatNumber(value: number) { return new Intl.NumberFormat("ar-YE", { maximumFractionDigits: 3 }).format(Number.isFinite(value) ? value : 0); }
 function formatDate(value: string) { return new Intl.DateTimeFormat("ar-YE", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
+function formatArabicDate(value: string) { return `${new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value))} م`; }

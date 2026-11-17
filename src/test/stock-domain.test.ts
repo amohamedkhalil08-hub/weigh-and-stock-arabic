@@ -6,7 +6,30 @@ import {
   computeTotalTons,
   createOpeningStockMovement,
   getItemBalance,
+  normalizeStockItem,
 } from "@/lib/stock-domain";
+
+describe("stock item normalization", () => {
+  it("keeps legacy records valid and defaults them to active", () => {
+    expect(normalizeStockItem({ id: "legacy", name: "قديم", piecesPerBundle: 5, pieceWeightKg: 2 }, "fallback")).toMatchObject({
+      id: "legacy",
+      name: "قديم",
+      piecesPerBundle: 5,
+      pieceWeightKg: 2,
+      archived: false,
+    });
+  });
+
+  it("normalizes optional item details without losing them", () => {
+    expect(normalizeStockItem({ id: "new", name: "حديث", piecesPerBundle: 5, pieceWeightKg: 2, size: "XL", dimensions: "20×30", barcode: "1234", note: "ملاحظة", archived: true }, "fallback")).toMatchObject({
+      size: "XL",
+      dimensions: "20×30",
+      barcode: "1234",
+      note: "ملاحظة",
+      archived: true,
+    });
+  });
+});
 
 describe("stock weight calculations", () => {
   it("calculates pieces from 10 bundles of 50 pieces", () => {
