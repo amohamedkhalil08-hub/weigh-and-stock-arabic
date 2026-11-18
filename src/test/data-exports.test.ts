@@ -17,6 +17,25 @@ describe("stock data exports", () => {
     expect(getMovementQuantities(inconsistent)).toEqual({ totalPieces: 100, totalTons: 1.7 });
   });
 
+  it("calculates the requested 10-bundle invoice fixture as 500 pieces and 12.5 tons", () => {
+    const invoiceMovement = {
+      id: "hs-20261118-001-line-1",
+      itemId: "item-hawi",
+      kind: "out" as const,
+      bundleCount: 10,
+      piecesPerBundle: 50,
+      totalPieces: 500,
+      pieceWeightKg: 25,
+      piecesPerTon: 40,
+      totalTons: 12.5,
+      note: "",
+      createdAt: "2026-11-18T00:00:00.000Z",
+      invoiceNumber: "HS-20261118-001",
+    };
+    expect(getMovementQuantities(invoiceMovement)).toEqual({ totalPieces: 500, totalTons: 12.5 });
+    expect(invoiceMovement.invoiceNumber).toBe("HS-20261118-001");
+  });
+
   it("exports every stock movement using the requested Arabic CSV columns and UTF-8 BOM", () => {
     const csv = buildMovementCsv(snapshot);
     expect(csv.charCodeAt(0)).toBe(0xfeff);

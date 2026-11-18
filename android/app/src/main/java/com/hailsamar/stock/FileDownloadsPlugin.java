@@ -1,10 +1,19 @@
 package com.hailsamar.stock;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.ContentValues;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
+import android.os.CancellationSignal;
 import android.os.Environment;
+import android.os.ParcelFileDescriptor;
+import android.print.PageRange;
+import android.print.PrintAttributes;
+import android.print.PrintDocumentAdapter;
+import android.print.PrintDocumentInfo;
+import android.print.PrintManager;
 import android.provider.MediaStore;
 import android.util.Base64;
 import com.getcapacitor.JSObject;
@@ -14,6 +23,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import java.io.InputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
@@ -102,6 +112,73 @@ public class FileDownloadsPlugin extends Plugin {
                 getContext().getContentResolver().delete(savedUri, null, null);
             }
             call.reject("تعذر حفظ الملف في مجلد التنزيلات: " + error.getMessage(), error);
+        }
+    }
+
+    @PluginMethod
+    public void openPrintPreview(PluginCall call) {
+        String uriValue = call.getString("uri");
+        String fileName = call.getString("fileName", "فاتورة.pdf");
+        if (uriValue == null || uriValue.trim().isEmpty()) {
+            call.reject("لم يتم العثور على ملف PDF لعرض معاينة الطباعة.");
+            return;
+        }
+
+        PrintManager printManager = (PrintManager) getContext().getSystemService(Context.PRINT_SERVICE);
+        if (printManager == null) {
+            call.reject("خدمة معاينة الطباعة غير متاحة على هذا الجهاز.");
+            return;
+        }
+
+        Uri pdfUri = Uri.parse(uriValue);
+        PrintDocumentAdapter adapter = new PrintDocumentAdapter() {
+            @Override
+            public void onLayout(PrintAttributes oldAttributes, PrintAttributes newAttributes, CancellationSignal cancellationSignal, LayoutResultCallback callback, Bundle extras) {
+                if (cancellationSignal.isCanceled()) {
+                    callback.onLayoutCancelled();
+                    return;
+                }
+                PrintDocumentInfo info = new PrintDocumentInfo.Builder(fileName)
+                    .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                    .setPageCount(PrintDocumentInfo.PAGE_COUNT_UNKNOWN)
+                    .build();
+                callback.onLayoutFinished(info, true);
+            }
+
+            @Override
+            public void onWrite(PageRange[] pages, ParcelFileDescriptor destination, CancellationSignal cancellationSignal, WriteResultCallback callback) {
+                if (cancellationSignal.isCanceled()) {
+                    callback.onWriteCancelled();
+                    return;
+                }
+                try (InputStream input = getContext().getContentResolver().openInputStream(pdfUri);
+                     FileOutputStream output = new FileOutputStream(destination.getFileDescriptor())) {
+                    if (input == null) throw new IllegalStateException("تعذر فتح ملف الفاتورة.");
+                    byte[] buffer = new byte[16 * 1024];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) {
+                        if (cancellationSignal.isCanceled()) {
+                            callback.onWriteCancelled();
+                            return;
+                        }
+                        output.write(buffer, 0, count);
+                    }
+                    output.flush();
+                    callback.onWriteFinished(new PageRange[] { PageRange.ALL_PAGES });
+                } catch (Exception error) {
+                    callback.onWriteFailed(error.getMessage());
+                }
+            }
+        };
+
+        try {
+            PrintAttributes attributes = new PrintAttributes.Builder()
+                .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                .build();
+            printManager.print(fileName, adapter, attributes);
+            call.resolve();
+        } catch (Exception error) {
+            call.reject("تعذر فتح معاينة الطباعة: " + error.getMessage(), error);
         }
     }
 }

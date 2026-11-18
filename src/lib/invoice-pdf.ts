@@ -1,7 +1,6 @@
 import html2canvas from "html2canvas";
-import Color from "colorjs.io";
 import { jsPDF } from "jspdf";
-import { downloadArrayBuffer } from "@/lib/data-exports";
+import { downloadArrayBuffer, openPrintPreview } from "@/lib/data-exports";
 
 export async function downloadInvoicePdf(element: HTMLElement, invoiceNumber: string) {
   await document.fonts?.ready;
@@ -11,23 +10,6 @@ export async function downloadInvoicePdf(element: HTMLElement, invoiceNumber: st
     backgroundColor: null,
     logging: false,
     ignoreElements: (node) => node instanceof HTMLElement && node.classList.contains("no-print"),
-    onclone: (clonedDocument) => {
-      const elements = clonedDocument.querySelectorAll<HTMLElement>(".invoice-paper, .invoice-paper *");
-      for (const element of elements) {
-        const computed = clonedDocument.defaultView?.getComputedStyle(element);
-        if (!computed) continue;
-        for (let index = 0; index < computed.length; index += 1) {
-          const property = computed.item(index);
-          const value = computed.getPropertyValue(property);
-          if (!/\b(?:oklch|oklab|lch|lab|color-mix|color)\(/i.test(value)) continue;
-          try {
-            element.style.setProperty(property, new Color(value).to("srgb").toString());
-          } catch {
-            // Keep unrelated/non-color values untouched if the browser reports an unsupported color.
-          }
-        }
-      }
-    },
   });
 
   const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
@@ -55,5 +37,7 @@ export async function downloadInvoicePdf(element: HTMLElement, invoiceNumber: st
 
   const safeNumber = invoiceNumber.replace(/[^\p{L}\p{N}-]/gu, "-");
   const pdfBytes = pdf.output("arraybuffer");
-  await downloadArrayBuffer(pdfBytes, `فاتورة-${safeNumber}.pdf`, "application/pdf");
+  const fileName = `فاتورة-${safeNumber}.pdf`;
+  const savedFile = await downloadArrayBuffer(pdfBytes, fileName, "application/pdf");
+  await openPrintPreview(savedFile);
 }

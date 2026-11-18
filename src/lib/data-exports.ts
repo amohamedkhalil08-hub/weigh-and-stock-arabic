@@ -3,7 +3,10 @@ import { computeTotalPieces, computeTotalTons, type StockItem, type StockMovemen
 
 type FileDownloadsPlugin = {
   saveFile(options: { fileName: string; mimeType: string; dataBase64: string }): Promise<{ fileName: string; uri: string }>;
+  openPrintPreview(options: { fileName: string; uri: string }): Promise<void>;
 };
+
+export type SavedFile = { fileName: string; uri: string };
 
 const nativeDownloads = registerPlugin<FileDownloadsPlugin>("FileDownloads");
 
@@ -104,19 +107,27 @@ async function saveNativeBytes(bytes: Uint8Array, filename: string, mimeType: st
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
   }
-  await nativeDownloads.saveFile({
+  return nativeDownloads.saveFile({
     fileName: filename,
     mimeType,
     dataBase64: btoa(binary),
   });
 }
 
-export async function downloadArrayBuffer(data: ArrayBuffer, filename: string, mimeType: string) {
+export async function downloadArrayBuffer(data: ArrayBuffer, filename: string, mimeType: string): Promise<SavedFile | null> {
   if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
-    await saveNativeBytes(new Uint8Array(data), filename, mimeType);
-    return;
+    return saveNativeBytes(new Uint8Array(data), filename, mimeType);
   }
   await downloadBlob(new Blob([data], { type: mimeType }), filename);
+  return null;
+}
+
+export async function openPrintPreview(savedFile: SavedFile | null) {
+  if (savedFile && Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
+    await nativeDownloads.openPrintPreview(savedFile);
+    return;
+  }
+  window.print();
 }
 
 export async function downloadBlob(blob: Blob, filename: string) {
