@@ -1,7 +1,7 @@
 import html2canvas from "html2canvas";
 import Color from "colorjs.io";
 import { jsPDF } from "jspdf";
-import { downloadBlob } from "@/lib/data-exports";
+import { downloadArrayBuffer, openPrintPreview } from "@/lib/data-exports";
 
 export async function downloadInvoicePdf(element: HTMLElement, invoiceNumber: string) {
   await document.fonts?.ready;
@@ -12,7 +12,9 @@ export async function downloadInvoicePdf(element: HTMLElement, invoiceNumber: st
     logging: false,
     ignoreElements: (node) => node instanceof HTMLElement && node.classList.contains("no-print"),
     onclone: (clonedDocument) => {
-      const elements = clonedDocument.querySelectorAll<HTMLElement>(".invoice-paper, .invoice-paper *");
+      const elements = clonedDocument.querySelectorAll<HTMLElement>(
+        ".invoice-paper, .invoice-paper *",
+      );
       for (const element of elements) {
         const computed = clonedDocument.defaultView?.getComputedStyle(element);
         if (!computed) continue;
@@ -48,11 +50,26 @@ export async function downloadInvoicePdf(element: HTMLElement, invoiceNumber: st
     context.drawImage(canvas, 0, y, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight);
     if (page > 0) pdf.addPage();
     const imageHeight = (sliceHeight / canvas.width) * pageWidth;
-    pdf.addImage(pageCanvas.toDataURL("image/jpeg", 0.94), "JPEG", margin, margin, pageWidth, imageHeight, undefined, "FAST");
+    pdf.addImage(
+      pageCanvas.toDataURL("image/jpeg", 0.94),
+      "JPEG",
+      margin,
+      margin,
+      pageWidth,
+      imageHeight,
+      undefined,
+      "FAST",
+    );
     y += sliceHeight;
     page += 1;
   }
 
   const safeNumber = invoiceNumber.replace(/[^\p{L}\p{N}-]/gu, "-");
-  downloadBlob(pdf.output("blob"), `فاتورة-${safeNumber}.pdf`);
+  const fileName = safeNumber.startsWith("HS-") ? `${safeNumber}.pdf` : `HS-${safeNumber}.pdf`;
+  const savedFile = await downloadArrayBuffer(
+    pdf.output("arraybuffer"),
+    fileName,
+    "application/pdf",
+  );
+  await openPrintPreview(savedFile);
 }

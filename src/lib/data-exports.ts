@@ -1,4 +1,7 @@
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Directory, Filesystem } from "@capacitor/filesystem";
+import { Capacitor } from "@capacitor/core";
+import { Share } from "@capacitor/share";
+import { FileOpener } from "@capacitor-community/file-opener";
 import {
   computeTotalPieces,
   computeTotalTons,
@@ -7,18 +10,7 @@ import {
   type StockSnapshot,
 } from "@/lib/stock-domain";
 
-type FileDownloadsPlugin = {
-  saveFile(options: {
-    fileName: string;
-    mimeType: string;
-    dataBase64: string;
-  }): Promise<{ fileName: string; uri: string }>;
-  openPrintPreview(options: { fileName: string; uri: string }): Promise<void>;
-};
-
 export type SavedFile = { fileName: string; uri: string };
-
-const nativeDownloads = registerPlugin<FileDownloadsPlugin>("FileDownloads");
 
 export function getMovementQuantities(movement: StockMovement) {
   const totalPieces =
@@ -59,7 +51,6 @@ export function buildBackupFile(
     group.push(movement);
     invoiceGroups.set(movement.invoiceNumber, group);
   }
-
   const customerGroups = new Map<string, StockMovement[]>();
   for (const movement of snapshot.movements) {
     const name = movement.customer?.trim();
@@ -68,7 +59,6 @@ export function buildBackupFile(
     group.push(movement);
     customerGroups.set(name, group);
   }
-
   return {
     app: "weigh-and-stock-arabic",
     version: 2,
@@ -114,10 +104,9 @@ export function buildMovementCsv(snapshot: StockSnapshot) {
     ],
   ];
   const itemNames = new Map(snapshot.items.map((item) => [item.id, item.name]));
-  const movements = snapshot.movements
+  for (const movement of snapshot.movements
     .slice()
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  for (const movement of movements) {
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
     const quantities = getMovementQuantities(movement);
     rows.push([
       movement.createdAt,
@@ -133,18 +122,59 @@ export function buildMovementCsv(snapshot: StockSnapshot) {
   return `\ufeff${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
 }
 
-async function saveNativeBytes(bytes: Uint8Array, filename: string, mimeType: string) {
-  if (!bytes.length) throw new Error("الملف الناتج فارغ.");
+function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
   const chunkSize = 0x8000;
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
   }
-  return nativeDownloads.saveFile({
-    fileName: filename,
-    mimeType,
-    dataBase64: btoa(binary),
-  });
+  return btoa(binary);
+}
+
+async function saveNativeBytes(
+  bytes: Uint8Array,
+  filename: string,
+  mimeType: string,
+): Promise<SavedFile> {
+  if (!bytes.length) throw new Error("الملف الناتج فارغ.");
+  try {
+    await Filesystem.requestPermissions();
+  } catch {
+    // Android 11+ does not require the legacy storage prompt for app-created Documents files.
+  }
+  const candidates = [
+    { directory: Directory.ExternalStorage, path: `Download/${filename}` },
+    { directory: Directory.Documents, path: filename },
+  ];
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    try {
+      await Filesystem.writeFile({
+        directory: candidate.directory,
+        path: candidate.path,
+        data: bytesToBase64(bytes),
+        recursive: true,
+      });
+      const { uri } = await Filesystem.getUri(candidate);
+      return { fileName: filename, uri };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("تعذر حفظ الملف على الجهاز.");
+}
+
+async function shareSavedFile(savedFile: SavedFile) {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    await Share.share({
+      title: savedFile.fileName,
+      files: [savedFile.uri],
+      dialogTitle: "فتح أو مشاركة الملف",
+    });
+  } catch {
+    // Closing the Android share sheet is not a save failure. The file is already on disk.
+  }
 }
 
 export async function downloadArrayBuffer(
@@ -161,20 +191,32 @@ export async function downloadArrayBuffer(
 
 export async function openPrintPreview(savedFile: SavedFile | null) {
   if (savedFile && Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
-    await nativeDownloads.openPrintPreview(savedFile);
+    try {
+      await FileOpener.open({
+        filePath: savedFile.uri,
+        contentType: "application/pdf",
+        openWithDefault: true,
+      });
+    } catch {
+      await shareSavedFile(savedFile);
+    }
     return;
   }
   window.print();
 }
 
-export async function downloadBlob(blob: Blob, filename: string) {
+export async function downloadBlob(blob: Blob, filename: string): Promise<SavedFile | null> {
+  const mimeType =
+    (blob.type || "application/octet-stream").split(";")[0] ?? "application/octet-stream";
   if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
-    const mimeType =
-      (blob.type || "application/octet-stream").split(";")[0] ?? "application/octet-stream";
-    await saveNativeBytes(new Uint8Array(await blob.arrayBuffer()), filename, mimeType);
-    return;
+    const savedFile = await saveNativeBytes(
+      new Uint8Array(await blob.arrayBuffer()),
+      filename,
+      mimeType,
+    );
+    await shareSavedFile(savedFile);
+    return savedFile;
   }
-
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -189,6 +231,7 @@ export async function downloadBlob(blob: Blob, filename: string) {
     anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
+  return null;
 }
 
 export function localDateStamp(date = new Date()) {
