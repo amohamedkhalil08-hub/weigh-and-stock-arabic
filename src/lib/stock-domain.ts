@@ -5,9 +5,6 @@ export type StockItem = {
   pieceWeightKg: number;
   createdAt: string;
   countryOfOrigin?: CountryOfOrigin;
-  size?: string;
-  dimensions?: string;
-  barcode?: string;
   note?: string;
   archived?: boolean;
 };
@@ -62,9 +59,6 @@ export function normalizeStockItem(value: unknown, fallbackId: string): StockIte
     piecesPerBundle: numberOrZero(record["piecesPerBundle"]),
     pieceWeightKg: numberOrZero(record["pieceWeightKg"]),
     createdAt: typeof record["createdAt"] === "string" ? record["createdAt"] : new Date(0).toISOString(),
-    ...(typeof record["size"] === "string" && { size: record["size"] }),
-    ...(typeof record["dimensions"] === "string" && { dimensions: record["dimensions"] }),
-    ...(typeof record["barcode"] === "string" && { barcode: record["barcode"] }),
     ...(typeof record["note"] === "string" && { note: record["note"] }),
     archived: record["archived"] === true,
   } as StockItem;

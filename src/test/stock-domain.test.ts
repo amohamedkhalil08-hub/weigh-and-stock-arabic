@@ -20,11 +20,8 @@ describe("stock item normalization", () => {
     });
   });
 
-  it("normalizes optional item details without losing them", () => {
-    expect(normalizeStockItem({ id: "new", name: "حديث", piecesPerBundle: 5, pieceWeightKg: 2, size: "XL", dimensions: "20×30", barcode: "1234", note: "ملاحظة", archived: true }, "fallback")).toMatchObject({
-      size: "XL",
-      dimensions: "20×30",
-      barcode: "1234",
+  it("normalizes optional note and archive status", () => {
+    expect(normalizeStockItem({ id: "new", name: "حديث", piecesPerBundle: 5, pieceWeightKg: 2, note: "ملاحظة", archived: true }, "fallback")).toMatchObject({
       note: "ملاحظة",
       archived: true,
     });
