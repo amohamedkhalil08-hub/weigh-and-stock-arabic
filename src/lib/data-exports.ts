@@ -1,5 +1,5 @@
 import { Directory, Filesystem } from "@capacitor/filesystem";
-import { Capacitor } from "@capacitor/core";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import { Share } from "@capacitor/share";
 import { FileOpener } from "@capacitor-community/file-opener";
 import {
@@ -11,6 +11,12 @@ import {
 } from "@/lib/stock-domain";
 
 export type SavedFile = { fileName: string; uri: string };
+
+type AndroidDownloadsPlugin = {
+  saveFile(options: { fileName: string; mimeType: string; dataBase64: string }): Promise<SavedFile>;
+};
+
+const androidDownloads = registerPlugin<AndroidDownloadsPlugin>("AndroidDownloads");
 
 export function getMovementQuantities(movement: StockMovement) {
   const totalPieces =
@@ -142,6 +148,17 @@ async function saveNativeBytes(
   } catch {
     // Android 11+ does not require the legacy storage prompt for app-created Documents files.
   }
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
+    try {
+      return await androidDownloads.saveFile({
+        fileName: filename,
+        mimeType,
+        dataBase64: bytesToBase64(bytes),
+      });
+    } catch {
+      // Fall back to Capacitor Filesystem for devices where MediaStore is unavailable.
+    }
+  }
   const candidates = [
     { directory: Directory.ExternalStorage, path: `Download/${filename}` },
     { directory: Directory.Documents, path: filename },
@@ -214,7 +231,6 @@ export async function downloadBlob(blob: Blob, filename: string): Promise<SavedF
       filename,
       mimeType,
     );
-    await shareSavedFile(savedFile);
     return savedFile;
   }
   const url = URL.createObjectURL(blob);
