@@ -1,6 +1,7 @@
 export type StockItem = {
   id: string;
   name: string;
+  bundleCount?: number;
   piecesPerBundle: number;
   pieceWeightKg: number;
   createdAt: string;
@@ -56,9 +57,13 @@ export function normalizeStockItem(value: unknown, fallbackId: string): StockIte
     ...record,
     id: typeof record["id"] === "string" && record["id"] ? record["id"] : fallbackId,
     name: typeof record["name"] === "string" ? record["name"] : "",
+    ...(Number.isFinite(Number(record["bundleCount"])) && Number(record["bundleCount"]) > 0
+      ? { bundleCount: Number(record["bundleCount"]) }
+      : {}),
     piecesPerBundle: numberOrZero(record["piecesPerBundle"]),
     pieceWeightKg: numberOrZero(record["pieceWeightKg"]),
-    createdAt: typeof record["createdAt"] === "string" ? record["createdAt"] : new Date(0).toISOString(),
+    createdAt:
+      typeof record["createdAt"] === "string" ? record["createdAt"] : new Date(0).toISOString(),
     ...(typeof record["note"] === "string" && { note: record["note"] }),
     archived: record["archived"] === true,
   } as StockItem;
@@ -78,8 +83,10 @@ export function normalizeStockMovement(value: unknown, fallbackId: string): Stoc
     piecesPerTon: numberOrZero(record["piecesPerTon"]),
     totalTons: numberOrZero(record["totalTons"]),
     note: typeof record["note"] === "string" ? record["note"] : "",
-    createdAt: typeof record["createdAt"] === "string" ? record["createdAt"] : new Date(0).toISOString(),
+    createdAt:
+      typeof record["createdAt"] === "string" ? record["createdAt"] : new Date(0).toISOString(),
     ...(typeof record["customer"] === "string" && { customer: record["customer"] }),
+    ...(typeof record["invoiceNumber"] === "string" && { invoiceNumber: record["invoiceNumber"] }),
   } as StockMovement;
 }
 
@@ -96,7 +103,12 @@ export function computeTotalTons(totalPieces: number, pieceWeightKg: number) {
   return piecesPerTon > 0 ? totalPieces / piecesPerTon : 0;
 }
 
-export function createOpeningStockMovement(item: StockItem, bundleCount: number, id: string, createdAt: string): StockMovement {
+export function createOpeningStockMovement(
+  item: StockItem,
+  bundleCount: number,
+  id: string,
+  createdAt: string,
+): StockMovement {
   const totalPieces = computeTotalPieces(bundleCount, item.piecesPerBundle);
   return {
     id,

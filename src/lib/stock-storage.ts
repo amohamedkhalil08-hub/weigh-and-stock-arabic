@@ -1,4 +1,11 @@
-import { normalizeStockItem, normalizeStockMovement, type StockBackup, type StockItem, type StockMovement, type StockSnapshot } from "@/lib/stock-domain";
+import {
+  normalizeStockItem,
+  normalizeStockMovement,
+  type StockBackup,
+  type StockItem,
+  type StockMovement,
+  type StockSnapshot,
+} from "@/lib/stock-domain";
 
 const DATABASE_NAME = "hail-samar-stock";
 const DATABASE_VERSION = 2;
@@ -62,7 +69,10 @@ function openDatabase(): Promise<IDBDatabase> {
             saveBackupBeforeMigration();
           };
 
-          const normalizeStore = (store: IDBObjectStore, normalize: (value: unknown, id: string) => unknown) => {
+          const normalizeStore = (
+            store: IDBObjectStore,
+            normalize: (value: unknown, id: string) => unknown,
+          ) => {
             const cursorRequest = store.openCursor();
             cursorRequest.onsuccess = () => {
               const cursor = cursorRequest.result;
@@ -88,7 +98,10 @@ function openDatabase(): Promise<IDBDatabase> {
       resolve(request.result);
     };
     request.onerror = () => reject(request.error ?? new Error("تعذر فتح قاعدة البيانات المحلية"));
-    request.onblocked = () => reject(new Error("أغلق النسخة المفتوحة من التطبيق ثم أعد المحاولة لإكمال تحديث قاعدة البيانات."));
+    request.onblocked = () =>
+      reject(
+        new Error("أغلق النسخة المفتوحة من التطبيق ثم أعد المحاولة لإكمال تحديث قاعدة البيانات."),
+      );
   });
 }
 
@@ -127,7 +140,10 @@ export async function updateStockMovement(movement: StockMovement) {
 export async function deleteStockMovementWithBackup(movementId: string) {
   const database = await openDatabase();
   try {
-    const transaction = database.transaction([ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE], "readwrite");
+    const transaction = database.transaction(
+      [ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE],
+      "readwrite",
+    );
     const itemsRequest = transaction.objectStore(ITEMS_STORE).getAll();
     const movementsRequest = transaction.objectStore(MOVEMENTS_STORE).getAll();
     const [items, movements] = await Promise.all([
@@ -148,10 +164,16 @@ export async function deleteStockMovementWithBackup(movementId: string) {
   }
 }
 
-export async function replaceInvoiceMovements(invoiceNumber: string, newMovements: StockMovement[]) {
+export async function replaceInvoiceMovements(
+  invoiceNumber: string,
+  newMovements: StockMovement[],
+) {
   const database = await openDatabase();
   try {
-    const transaction = database.transaction([ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE], "readwrite");
+    const transaction = database.transaction(
+      [ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE],
+      "readwrite",
+    );
     const itemsStore = transaction.objectStore(ITEMS_STORE);
     const movementsStore = transaction.objectStore(MOVEMENTS_STORE);
     const [items, movements] = await Promise.all([
@@ -164,7 +186,8 @@ export async function replaceInvoiceMovements(invoiceNumber: string, newMovement
       reason: `نسخة تلقائية قبل تعديل الفاتورة ${invoiceNumber}`,
       snapshot: { items, movements },
     } satisfies StockBackup);
-    movements.filter((movement) => movement.invoiceNumber === invoiceNumber)
+    movements
+      .filter((movement) => movement.invoiceNumber === invoiceNumber)
       .forEach((movement) => movementsStore.delete(movement.id));
     newMovements.forEach((movement) => movementsStore.put({ ...movement, invoiceNumber }));
     await waitForTransaction(transaction);
@@ -176,7 +199,10 @@ export async function replaceInvoiceMovements(invoiceNumber: string, newMovement
 export async function deleteInvoiceWithBackup(invoiceNumber: string) {
   const database = await openDatabase();
   try {
-    const transaction = database.transaction([ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE], "readwrite");
+    const transaction = database.transaction(
+      [ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE],
+      "readwrite",
+    );
     const itemsStore = transaction.objectStore(ITEMS_STORE);
     const movementsStore = transaction.objectStore(MOVEMENTS_STORE);
     const [items, movements] = await Promise.all([
@@ -189,7 +215,8 @@ export async function deleteInvoiceWithBackup(invoiceNumber: string) {
       reason: `نسخة تلقائية قبل حذف الفاتورة ${invoiceNumber}`,
       snapshot: { items, movements },
     } satisfies StockBackup);
-    movements.filter((movement) => movement.invoiceNumber === invoiceNumber)
+    movements
+      .filter((movement) => movement.invoiceNumber === invoiceNumber)
       .forEach((movement) => movementsStore.delete(movement.id));
     await waitForTransaction(transaction);
   } finally {
@@ -202,14 +229,34 @@ export const deleteInvoiceMovementsWithBackup = deleteInvoiceWithBackup;
 
 export async function saveStockItem(item: StockItem) {
   const database = await openDatabase();
-  try { const transaction = database.transaction(ITEMS_STORE, "readwrite"); transaction.objectStore(ITEMS_STORE).put(item); await waitForTransaction(transaction); }
-  finally { database.close(); }
+  try {
+    const transaction = database.transaction(ITEMS_STORE, "readwrite");
+    transaction.objectStore(ITEMS_STORE).put(item);
+    await waitForTransaction(transaction);
+  } finally {
+    database.close();
+  }
+}
+
+export async function saveStockItemAndOpeningMovement(item: StockItem, movement: StockMovement) {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction([ITEMS_STORE, MOVEMENTS_STORE], "readwrite");
+    transaction.objectStore(ITEMS_STORE).put(item);
+    transaction.objectStore(MOVEMENTS_STORE).put(movement);
+    await waitForTransaction(transaction);
+  } finally {
+    database.close();
+  }
 }
 
 export async function deleteStockItemWithBackup(itemId: string) {
   const database = await openDatabase();
   try {
-    const transaction = database.transaction([ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE], "readwrite");
+    const transaction = database.transaction(
+      [ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE],
+      "readwrite",
+    );
     const itemsStore = transaction.objectStore(ITEMS_STORE);
     const movementsStore = transaction.objectStore(MOVEMENTS_STORE);
     const [items, movements] = await Promise.all([
@@ -225,10 +272,15 @@ export async function deleteStockItemWithBackup(itemId: string) {
     itemsStore.delete(itemId);
     movementsStore.index("itemId").openCursor(IDBKeyRange.only(itemId)).onsuccess = (event) => {
       const cursor = (event.target as IDBRequest<IDBCursorWithValue | null>).result;
-      if (cursor) { cursor.delete(); cursor.continue(); }
+      if (cursor) {
+        cursor.delete();
+        cursor.continue();
+      }
     };
     await waitForTransaction(transaction);
-  } finally { database.close(); }
+  } finally {
+    database.close();
+  }
 }
 
 export async function saveStockItemWithOpeningMovement(item: StockItem, movement: StockMovement) {
@@ -239,8 +291,10 @@ export async function saveStockItemWithOpeningMovement(item: StockItem, movement
     transaction.objectStore(MOVEMENTS_STORE).add(movement);
     await new Promise<void>((resolve, reject) => {
       transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error ?? new Error("تعذر حفظ الصنف ورصيده الافتتاحي"));
-      transaction.onabort = () => reject(transaction.error ?? new Error("تم إلغاء حفظ الصنف ورصيده الافتتاحي"));
+      transaction.onerror = () =>
+        reject(transaction.error ?? new Error("تعذر حفظ الصنف ورصيده الافتتاحي"));
+      transaction.onabort = () =>
+        reject(transaction.error ?? new Error("تم إلغاء حفظ الصنف ورصيده الافتتاحي"));
     });
   } finally {
     database.close();
@@ -249,16 +303,26 @@ export async function saveStockItemWithOpeningMovement(item: StockItem, movement
 
 export async function saveStockMovements(movements: StockMovement[]) {
   const database = await openDatabase();
-  try { const transaction = database.transaction(MOVEMENTS_STORE, "readwrite"); movements.forEach((movement) => transaction.objectStore(MOVEMENTS_STORE).add(movement)); await waitForTransaction(transaction); }
-  finally { database.close(); }
+  try {
+    const transaction = database.transaction(MOVEMENTS_STORE, "readwrite");
+    movements.forEach((movement) => transaction.objectStore(MOVEMENTS_STORE).add(movement));
+    await waitForTransaction(transaction);
+  } finally {
+    database.close();
+  }
 }
 
-export async function saveStockMovement(movement: StockMovement) { return saveStockMovements([movement]); }
+export async function saveStockMovement(movement: StockMovement) {
+  return saveStockMovements([movement]);
+}
 
 export async function restoreStockSnapshot(snapshot: StockSnapshot) {
   const database = await openDatabase();
   try {
-    const transaction = database.transaction([ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE], "readwrite");
+    const transaction = database.transaction(
+      [ITEMS_STORE, MOVEMENTS_STORE, BACKUPS_STORE],
+      "readwrite",
+    );
     const items = transaction.objectStore(ITEMS_STORE);
     const movements = transaction.objectStore(MOVEMENTS_STORE);
     const [previousItems, previousMovements] = await Promise.all([
@@ -274,7 +338,9 @@ export async function restoreStockSnapshot(snapshot: StockSnapshot) {
     items.clear();
     movements.clear();
     snapshot.items.forEach((item) => items.put(normalizeStockItem(item, crypto.randomUUID())));
-    snapshot.movements.forEach((movement) => movements.put(normalizeStockMovement(movement, crypto.randomUUID())));
+    snapshot.movements.forEach((movement) =>
+      movements.put(normalizeStockMovement(movement, crypto.randomUUID())),
+    );
     await waitForTransaction(transaction);
   } finally {
     database.close();
