@@ -1,16 +1,17 @@
-import {
-  computeTotalPieces,
-  computeTotalTons,
-  type StockItem,
-  type StockMovement,
-  type StockSnapshot,
-} from "@/lib/stock-domain";
+import { Capacitor, registerPlugin } from "@capacitor/core";
+import { computeTotalPieces, computeTotalTons, type StockItem, type StockMovement, type StockSnapshot } from "@/lib/stock-domain";
+
+type FileDownloadsPlugin = {
+  saveFile(options: { fileName: string; mimeType: string; dataBase64: string }): Promise<{ fileName: string; uri: string }>;
+  openPrintPreview(options: { fileName: string; uri: string }): Promise<void>;
+};
+
+export type SavedFile = { fileName: string; uri: string };
+
+const nativeDownloads = registerPlugin<FileDownloadsPlugin>("FileDownloads");
 
 export function getMovementQuantities(movement: StockMovement) {
-  const totalPieces =
-    Number.isFinite(movement.totalPieces) && movement.totalPieces >= 0
-      ? movement.totalPieces
-      : computeTotalPieces(movement.bundleCount, movement.piecesPerBundle);
+  const totalPieces = computeTotalPieces(movement.bundleCount, movement.piecesPerBundle);
   return {
     totalPieces,
     totalTons: Number(computeTotalTons(totalPieces, movement.pieceWeightKg).toFixed(6)),
@@ -34,10 +35,7 @@ export type BackupFile = {
   customers: Array<{ name: string; movementIds: string[] }>;
 };
 
-export function buildBackupFile(
-  snapshot: StockSnapshot,
-  exportedAt = new Date().toISOString(),
-): BackupFile {
+export function buildBackupFile(snapshot: StockSnapshot, exportedAt = new Date().toISOString()): BackupFile {
   const invoiceGroups = new Map<string, StockMovement[]>();
   for (const movement of snapshot.movements) {
     if (movement.kind !== "out" || !movement.invoiceNumber) continue;
@@ -66,14 +64,8 @@ export function buildBackupFile(
       createdAt: movements[0]?.createdAt ?? exportedAt,
       customer: movements[0]?.customer ?? "",
       movementIds: movements.map((movement) => movement.id),
-      totalPieces: movements.reduce(
-        (sum, movement) => sum + getMovementQuantities(movement).totalPieces,
-        0,
-      ),
-      totalTons: movements.reduce(
-        (sum, movement) => sum + getMovementQuantities(movement).totalTons,
-        0,
-      ),
+      totalPieces: movements.reduce((sum, movement) => sum + getMovementQuantities(movement).totalPieces, 0),
+      totalTons: movements.reduce((sum, movement) => sum + getMovementQuantities(movement).totalTons, 0),
     })),
     customers: [...customerGroups.entries()].map(([name, movements]) => ({
       name,
@@ -88,21 +80,10 @@ function csvCell(value: unknown) {
 
 export function buildMovementCsv(snapshot: StockSnapshot) {
   const rows: unknown[][] = [
-    [
-      "التاريخ",
-      "النوع (صادر / وارد)",
-      "الصنف",
-      "البادل",
-      "الحبات",
-      "الوزن (طن)",
-      "العميل",
-      "ملاحظة",
-    ],
+    ["التاريخ", "النوع (صادر / وارد)", "الصنف", "البادل", "الحبات", "الوزن (طن)", "العميل", "ملاحظة"],
   ];
   const itemNames = new Map(snapshot.items.map((item) => [item.id, item.name]));
-  const movements = snapshot.movements
-    .slice()
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const movements = snapshot.movements.slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   for (const movement of movements) {
     const quantities = getMovementQuantities(movement);
     rows.push([
@@ -119,7 +100,43 @@ export function buildMovementCsv(snapshot: StockSnapshot) {
   return `\ufeff${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
 }
 
-export function downloadBlob(blob: Blob, filename: string) {
+async function saveNativeBytes(bytes: Uint8Array, filename: string, mimeType: string) {
+  if (!bytes.length) throw new Error("الملف الناتج فارغ.");
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return nativeDownloads.saveFile({
+    fileName: filename,
+    mimeType,
+    dataBase64: btoa(binary),
+  });
+}
+
+export async function downloadArrayBuffer(data: ArrayBuffer, filename: string, mimeType: string): Promise<SavedFile | null> {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
+    return saveNativeBytes(new Uint8Array(data), filename, mimeType);
+  }
+  await downloadBlob(new Blob([data], { type: mimeType }), filename);
+  return null;
+}
+
+export async function openPrintPreview(savedFile: SavedFile | null) {
+  if (savedFile && Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
+    await nativeDownloads.openPrintPreview(savedFile);
+    return;
+  }
+  window.print();
+}
+
+export async function downloadBlob(blob: Blob, filename: string) {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
+    const mimeType = (blob.type || "application/octet-stream").split(";")[0] ?? "application/octet-stream";
+    await saveNativeBytes(new Uint8Array(await blob.arrayBuffer()), filename, mimeType);
+    return;
+  }
+
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
