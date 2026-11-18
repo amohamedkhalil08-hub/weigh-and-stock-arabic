@@ -54,5 +54,5 @@ export async function downloadInvoicePdf(element: HTMLElement, invoiceNumber: st
   }
 
   const safeNumber = invoiceNumber.replace(/[^\p{L}\p{N}-]/gu, "-");
-  downloadBlob(pdf.output("blob"), `فاتورة-${safeNumber}.pdf`);
+  await downloadBlob(pdf.output("blob"), `فاتورة-${safeNumber}.pdf`);
 }

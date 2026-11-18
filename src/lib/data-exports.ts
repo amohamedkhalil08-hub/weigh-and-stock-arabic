@@ -1,4 +1,11 @@
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import { computeTotalPieces, computeTotalTons, type StockItem, type StockMovement, type StockSnapshot } from "@/lib/stock-domain";
+
+type FileDownloadsPlugin = {
+  saveFile(options: { fileName: string; mimeType: string; dataBase64: string }): Promise<{ fileName: string; uri: string }>;
+};
+
+const nativeDownloads = registerPlugin<FileDownloadsPlugin>("FileDownloads");
 
 export function getMovementQuantities(movement: StockMovement) {
   const totalPieces = computeTotalPieces(movement.bundleCount, movement.piecesPerBundle);
@@ -90,7 +97,22 @@ export function buildMovementCsv(snapshot: StockSnapshot) {
   return `\ufeff${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
 }
 
-export function downloadBlob(blob: Blob, filename: string) {
+export async function downloadBlob(blob: Blob, filename: string) {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+    await nativeDownloads.saveFile({
+      fileName: filename,
+      mimeType: (blob.type || "application/octet-stream").split(";")[0] ?? "application/octet-stream",
+      dataBase64: btoa(binary),
+    });
+    return;
+  }
+
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

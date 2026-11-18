@@ -181,16 +181,16 @@ export function StockApp() {
   function exportCsv() {
     void runExport("csv", async () => {
       const csv = buildMovementCsv(snapshot);
-      downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `كشف-${localDateStamp()}.csv`);
-    }, "تم تنزيل كشف CSV بنجاح");
+      await downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `كشف-${localDateStamp()}.csv`);
+    }, "تم حفظ كشف CSV في مجلد التنزيلات.");
   }
 
   function exportBackup() {
     void runExport("backup", async () => {
       const payload = buildBackupFile(snapshot);
       const contents = JSON.stringify(payload, null, 2);
-      downloadBlob(new Blob([contents], { type: "application/json;charset=utf-8" }), `نسخة-احتياطية-${localDateStamp()}.json`);
-    }, "تم تنزيل النسخة الاحتياطية بنجاح");
+      await downloadBlob(new Blob([contents], { type: "application/json;charset=utf-8" }), `نسخة-احتياطية-${localDateStamp()}.json`);
+    }, "تم حفظ النسخة الاحتياطية في مجلد التنزيلات.");
   }
 
   function exportInvoice(invoiceNumber: string) {
@@ -198,7 +198,7 @@ export function StockApp() {
       const invoiceElement = document.querySelector<HTMLElement>(".invoice-paper");
       if (!invoiceElement) throw new Error("لم يتم العثور على الفاتورة المعروضة.");
       await downloadInvoicePdf(invoiceElement, invoiceNumber);
-    }, "تم تنزيل الفاتورة بصيغة PDF بنجاح");
+    }, "تم حفظ الفاتورة بصيغة PDF في مجلد التنزيلات.");
   }
 
   async function importBackup(event: ChangeEvent<HTMLInputElement>) {
