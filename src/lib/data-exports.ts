@@ -97,19 +97,32 @@ export function buildMovementCsv(snapshot: StockSnapshot) {
   return `\ufeff${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
 }
 
+async function saveNativeBytes(bytes: Uint8Array, filename: string, mimeType: string) {
+  if (!bytes.length) throw new Error("الملف الناتج فارغ.");
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  await nativeDownloads.saveFile({
+    fileName: filename,
+    mimeType,
+    dataBase64: btoa(binary),
+  });
+}
+
+export async function downloadArrayBuffer(data: ArrayBuffer, filename: string, mimeType: string) {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
+    await saveNativeBytes(new Uint8Array(data), filename, mimeType);
+    return;
+  }
+  await downloadBlob(new Blob([data], { type: mimeType }), filename);
+}
+
 export async function downloadBlob(blob: Blob, filename: string) {
   if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    let binary = "";
-    const chunkSize = 0x8000;
-    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-      binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
-    }
-    await nativeDownloads.saveFile({
-      fileName: filename,
-      mimeType: (blob.type || "application/octet-stream").split(";")[0] ?? "application/octet-stream",
-      dataBase64: btoa(binary),
-    });
+    const mimeType = (blob.type || "application/octet-stream").split(";")[0] ?? "application/octet-stream";
+    await saveNativeBytes(new Uint8Array(await blob.arrayBuffer()), filename, mimeType);
     return;
   }
 

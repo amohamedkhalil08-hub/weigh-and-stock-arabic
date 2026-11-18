@@ -1,7 +1,7 @@
 import html2canvas from "html2canvas";
 import Color from "colorjs.io";
 import { jsPDF } from "jspdf";
-import { downloadBlob } from "@/lib/data-exports";
+import { downloadArrayBuffer } from "@/lib/data-exports";
 
 export async function downloadInvoicePdf(element: HTMLElement, invoiceNumber: string) {
   await document.fonts?.ready;
@@ -54,5 +54,6 @@ export async function downloadInvoicePdf(element: HTMLElement, invoiceNumber: st
   }
 
   const safeNumber = invoiceNumber.replace(/[^\p{L}\p{N}-]/gu, "-");
-  await downloadBlob(pdf.output("blob"), `فاتورة-${safeNumber}.pdf`);
+  const pdfBytes = pdf.output("arraybuffer");
+  await downloadArrayBuffer(pdfBytes, `فاتورة-${safeNumber}.pdf`, "application/pdf");
 }
