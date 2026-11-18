@@ -3,18 +3,66 @@ import { buildBackupFile, buildMovementCsv, getMovementQuantities } from "@/lib/
 import type { StockSnapshot } from "@/lib/stock-domain";
 
 const snapshot: StockSnapshot = {
-  items: [{ id: "item-1", name: "مكرونة", piecesPerBundle: 50, pieceWeightKg: 17, createdAt: "2026-11-17T08:00:00.000Z" }],
+  items: [
+    {
+      id: "item-1",
+      name: "مكرونة",
+      piecesPerBundle: 50,
+      pieceWeightKg: 17,
+      createdAt: "2026-11-17T08:00:00.000Z",
+    },
+  ],
   movements: [
-    { id: "in-1", itemId: "item-1", kind: "in", bundleCount: 25, piecesPerBundle: 50, totalPieces: 1250, pieceWeightKg: 17, piecesPerTon: 1000 / 17, totalTons: 21.25, note: "رصيد افتتاحي", createdAt: "2026-11-17T08:00:00.000Z" },
-    { id: "out-1", itemId: "item-1", kind: "out", bundleCount: 2, piecesPerBundle: 50, totalPieces: 100, pieceWeightKg: 17, piecesPerTon: 1000 / 17, totalTons: 1.7, note: "تسليم", customer: "عميل ١", invoiceNumber: "HS-20261117-001", createdAt: "2026-11-17T09:00:00.000Z" },
-    { id: "out-2", itemId: "item-1", kind: "out", bundleCount: 3, piecesPerBundle: 50, totalPieces: 150, pieceWeightKg: 17, piecesPerTon: 2, totalTons: 2.55, note: "تسليم", customer: "عميل ١", invoiceNumber: "HS-20261117-001", createdAt: "2026-11-17T09:00:00.000Z" },
+    {
+      id: "in-1",
+      itemId: "item-1",
+      kind: "in",
+      bundleCount: 25,
+      piecesPerBundle: 50,
+      totalPieces: 1250,
+      pieceWeightKg: 17,
+      piecesPerTon: 1000 / 17,
+      totalTons: 21.25,
+      note: "رصيد افتتاحي",
+      createdAt: "2026-11-17T08:00:00.000Z",
+    },
+    {
+      id: "out-1",
+      itemId: "item-1",
+      kind: "out",
+      bundleCount: 2,
+      piecesPerBundle: 50,
+      totalPieces: 100,
+      pieceWeightKg: 17,
+      piecesPerTon: 1000 / 17,
+      totalTons: 1.7,
+      note: "تسليم",
+      customer: "عميل ١",
+      invoiceNumber: "HS-20261117-001",
+      createdAt: "2026-11-17T09:00:00.000Z",
+    },
+    {
+      id: "out-2",
+      itemId: "item-1",
+      kind: "out",
+      bundleCount: 3,
+      piecesPerBundle: 50,
+      totalPieces: 150,
+      pieceWeightKg: 17,
+      piecesPerTon: 2,
+      totalTons: 2.55,
+      note: "تسليم",
+      customer: "عميل ١",
+      invoiceNumber: "HS-20261117-001",
+      createdAt: "2026-11-17T09:00:00.000Z",
+    },
   ],
 };
 
 describe("stock data exports", () => {
-  it("recalculates quantities from each movement's original bundle count, pack size, and saved weight", () => {
+  it("preserves a manually corrected total piece count and recalculates only its weight", () => {
     const inconsistent = { ...snapshot.movements[1]!, totalPieces: 1, totalTons: 999 };
-    expect(getMovementQuantities(inconsistent)).toEqual({ totalPieces: 100, totalTons: 1.7 });
+    expect(getMovementQuantities(inconsistent)).toEqual({ totalPieces: 1, totalTons: 0.017 });
   });
 
   it("exports every stock movement using the requested Arabic CSV columns and UTF-8 BOM", () => {
@@ -34,7 +82,13 @@ describe("stock data exports", () => {
     expect(backup.items).toEqual(snapshot.items);
     expect(backup.movements).toEqual(snapshot.movements);
     expect(backup.invoices).toHaveLength(1);
-    expect(backup.invoices[0]).toMatchObject({ invoiceNumber: "HS-20261117-001", movementIds: ["out-1", "out-2"], totalPieces: 250, totalTons: 4.25, customer: "عميل ١" });
+    expect(backup.invoices[0]).toMatchObject({
+      invoiceNumber: "HS-20261117-001",
+      movementIds: ["out-1", "out-2"],
+      totalPieces: 250,
+      totalTons: 4.25,
+      customer: "عميل ١",
+    });
     expect(backup.customers).toEqual([{ name: "عميل ١", movementIds: ["out-1", "out-2"] }]);
   });
 });
